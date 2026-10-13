@@ -1,0 +1,30 @@
+{
+  "name": "exam-prep-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "极简清爽的备考管理 Web App 前端原型",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "verify:build": "node scripts/verify-build.mjs"
+  },
+  "dependencies": {
+    "lucide-vue-next": "^0.469.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.5.1",
+    "happy-dom": "^21.0.1",
+    "typescript": "~5.6.3",
+    "vite": "^6.0.7",
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^5.0.4",
+    "vue-tsc": "^2.2.0"
+  }
+}

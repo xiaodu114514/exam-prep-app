@@ -1,0 +1,28 @@
+{
+  "name": "exam-prep-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "稳步备考 后端 API（Fastify + SQLite），阶段 1 本地开发",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "better-sqlite3": "^12.0.0",
+    "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "~5.6.3",
+    "vitest": "^5.0.4"
+  }
+}
