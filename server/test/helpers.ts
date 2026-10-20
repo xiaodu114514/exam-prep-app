@@ -18,6 +18,7 @@ export function createTestApp(overrides?: Partial<Config>) {
     sessionTtlMs: 60_000,
     cookieSecure: false,
     trustProxy: false,
+    agentApiKey: '',
     ...overrides,
   }
   const app: FastifyInstance = buildApp({ db, config })

@@ -71,8 +71,10 @@ router.beforeEach(async (to) => {
 })
 
 router.afterEach((to) => {
+  const store = useAppStore()
+  const appName = store.state.data.texts?.appName?.trim() || '稳步备考'
   const title = to.meta.title as string | undefined
-  document.title = title ? `${title} · 稳步备考` : '稳步备考'
+  document.title = title ? `${title} · ${appName}` : appName
 })
 
 export default router

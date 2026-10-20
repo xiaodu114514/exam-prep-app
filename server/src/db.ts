@@ -24,6 +24,13 @@ export interface ExamRow {
   date: string
 }
 
+export interface AppTextsRow {
+  id: number
+  app_name: string
+  greeting: string
+  slogan: string
+}
+
 export interface SubjectRow {
   id: string
   name: string
@@ -109,11 +116,11 @@ CREATE TABLE IF NOT EXISTS data_backups (
 `
 
 /** 当前程序支持的 schema 版本（与 PRAGMA user_version 对应） */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 /**
  * 迁移步骤列表：索引 = 当前 user_version，执行后写入 user_version = 索引 + 1。
- * 未来结构变更时追加新步骤（例如 v2 -> v3 时在数组末尾加一个函数）。
+ * 未来结构变更时追加新步骤（例如 v3 -> v4 时在数组末尾加一个函数）。
  */
 const MIGRATIONS: Array<(db: DB) => void> = [
   (db) => {
@@ -125,6 +132,20 @@ const MIGRATIONS: Array<(db: DB) => void> = [
       ALTER TABLE tasks ADD COLUMN daily INTEGER NOT NULL DEFAULT 0 CHECK (daily IN (0,1));
       ALTER TABLE tasks ADD COLUMN done_date TEXT;
     `)
+  },
+  // v3：可自定义应用文案（应用名 / 主页问候语 / 主页口号），单行表
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS app_texts (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        app_name TEXT NOT NULL DEFAULT '',
+        greeting TEXT NOT NULL DEFAULT '',
+        slogan TEXT NOT NULL DEFAULT ''
+      );
+    `)
+    db.prepare(
+      `INSERT OR IGNORE INTO app_texts (id, app_name, greeting, slogan) VALUES (1, '', '', '')`,
+    ).run()
   },
 ]
 

@@ -21,6 +21,11 @@ const { toasts, dismiss } = useToast()
 const isPublicPage = computed(() => route.meta.public === true)
 /** 初始化门禁期间显示加载遮罩，不渲染业务页面 */
 const booting = computed(() => store.authStatus.value === 'loading')
+/** 自定义应用名，留空使用默认 */
+const appName = computed(() => {
+  const custom = store.state.data.texts?.appName?.trim()
+  return custom ? custom : '稳步备考'
+})
 
 const navItems = [
   { path: '/', label: '主页', icon: Home },
@@ -38,7 +43,7 @@ const navItems = [
         <span class="sidebar__logo">
           <GraduationCap :size="20" />
         </span>
-        <span class="sidebar__name">稳步备考</span>
+        <span class="sidebar__name">{{ appName }}</span>
       </div>
       <nav class="sidebar__nav">
         <RouterLink

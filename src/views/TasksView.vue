@@ -24,26 +24,46 @@ const rate = computed(() => (totalCount.value ? Math.round((doneCount.value / to
 
 const isToday = computed(() => selectedDate.value === today)
 
-// ---------- 背诵专区 ----------
-/** 背诵任务：关联了科目的任务 */
-const reciteTasks = computed(() => dayTasks.value.filter((t) => t.subjectId))
-/** 其他任务：未关联科目的任务 */
-const otherTasks = computed(() => dayTasks.value.filter((t) => !t.subjectId))
+// ---------- 按学科分组 ----------
+interface SubjectGroup {
+  subject: Subject | null
+  title: string
+  tasks: Task[]
+  done: number
+  /** 该组今日已完成的背诵量合计 */
+  recited: number
+}
 
-/** 今日按科目汇总的已背数量 */
-const reciteSummary = computed(() => {
-  const rows: { subject: Subject; amount: number }[] = []
+const groups = computed<SubjectGroup[]>(() => {
+  const tasks = dayTasks.value
+  const result: SubjectGroup[] = []
+
   for (const s of store.state.data.subjects) {
-    let sum = 0
-    for (const t of reciteTasks.value) {
-      if (t.completed && t.subjectId === s.id) sum += t.amount ?? 0
+    const arr = tasks.filter((t) => t.subjectId === s.id)
+    if (arr.length > 0) {
+      const doneTasks = arr.filter((t) => t.completed)
+      result.push({
+        subject: s,
+        title: s.name,
+        tasks: arr,
+        done: doneTasks.length,
+        recited: doneTasks.reduce((sum, t) => sum + (t.amount ?? 0), 0),
+      })
     }
-    if (sum > 0) rows.push({ subject: s, amount: sum })
   }
-  return rows
-})
 
-const reciteDone = computed(() => reciteTasks.value.filter((t) => t.completed).length)
+  const other = tasks.filter((t) => !t.subjectId)
+  if (other.length > 0) {
+    result.push({
+      subject: null,
+      title: '其他任务',
+      tasks: other,
+      done: other.filter((t) => t.completed).length,
+      recited: 0,
+    })
+  }
+  return result
+})
 
 function shiftDay(delta: number) {
   selectedDate.value = addDays(selectedDate.value, delta)
@@ -92,12 +112,6 @@ function openCreate() {
   form.daily = false
   formError.value = ''
   showForm.value = true
-}
-
-/** 快捷新建背诵任务：默认选中第一个科目 */
-function openCreateRecite() {
-  openCreate()
-  form.subjectId = store.state.data.subjects[0]?.id ?? null
 }
 
 function openEdit(task: Task) {
@@ -218,86 +232,57 @@ async function confirmRemove() {
       <ProgressBar :value="doneCount" :max="totalCount" size="lg" tone="success" />
     </section>
 
-    <!-- 背诵专区 -->
+    <!-- 按学科分类 -->
     <section class="section">
       <div class="section-title">
         <span class="section-title__label">
-          <BookOpen :size="15" class="section-title__icon" />
-          背诵专区
+          <ListTodo :size="15" class="section-title__icon" />
+          按学科
         </span>
-        <button class="btn btn--soft btn--sm" type="button" @click="openCreateRecite">
-          <Plus :size="15" />
-          背诵任务
-        </button>
-      </div>
-
-      <div class="card">
-        <div v-if="reciteSummary.length" class="recite-summary">
-          <span class="recite-summary__label">今日已背</span>
-          <div class="recite-summary__chips">
-            <span v-for="row in reciteSummary" :key="row.subject.id" class="chip chip--amount">
-              {{ row.subject.name }} +{{ row.amount }} {{ row.subject.unit }}
-            </span>
-          </div>
-        </div>
-
-        <div v-if="reciteTasks.length">
-          <p class="recite-zone__hint">
-            已背 {{ reciteDone }} / {{ reciteTasks.length }} 项，勾选完成后自动累计到背诵计划进度
-          </p>
-          <TaskRow
-            v-for="task in reciteTasks"
-            :key="task.id"
-            :task="task"
-            :subject-name="store.getSubject(task.subjectId)?.name"
-            :subject-unit="store.getSubject(task.subjectId)?.unit"
-            @toggle="onToggle"
-            @edit="openEdit"
-            @remove="askRemove"
-          />
-        </div>
-        <EmptyState
-          v-else
-          :icon="BookOpen"
-          title="今天还没有背诵任务"
-          desc="新建任务时选择科目，任务就会出现在背诵专区"
-          action-text="新建背诵任务"
-          @action="openCreateRecite"
-        />
-      </div>
-    </section>
-
-    <!-- 其他任务 -->
-    <section class="section">
-      <div class="section-title">
-        <span>任务列表</span>
         <button class="btn btn--soft btn--sm" type="button" @click="openCreate">
           <Plus :size="15" />
           新建任务
         </button>
       </div>
 
-      <div class="card">
-        <div v-if="otherTasks.length">
+      <div v-if="groups.length" class="subject-groups">
+        <div v-for="g in groups" :key="g.subject?.id ?? 'other'" class="card subject-group">
+          <div class="subject-group__head">
+            <div class="subject-group__title">
+              <BookOpen v-if="g.subject" :size="15" class="subject-group__icon" />
+              <ListTodo v-else :size="15" class="subject-group__icon" />
+              <span class="subject-group__name">{{ g.title }}</span>
+              <span v-if="g.subject" class="chip">{{ g.subject.unit }}</span>
+            </div>
+            <div class="subject-group__meta">
+              <span v-if="g.recited > 0" class="chip chip--amount">已背 {{ g.recited }}</span>
+              <span class="chip">{{ g.done }}/{{ g.tasks.length }} 完成</span>
+            </div>
+          </div>
           <TaskRow
-            v-for="task in otherTasks"
+            v-for="task in g.tasks"
             :key="task.id"
             :task="task"
+            :subject-name="g.subject?.name"
+            :subject-unit="g.subject?.unit"
             @toggle="onToggle"
             @edit="openEdit"
             @remove="askRemove"
           />
         </div>
+      </div>
+      <div v-else class="card">
         <EmptyState
-          v-else
           :icon="ListTodo"
-          title="没有其他任务"
-          desc="点击「新建任务」，安排当天的学习计划"
+          title="今天还没有任务"
+          desc="新建任务并选择学科，任务会按学科分组展示"
           action-text="新建任务"
           @action="openCreate"
         />
       </div>
     </section>
+
+    <!-- 其他任务（已并入按学科分组的「其他任务」组） -->
 
     <!-- 新建 / 编辑弹窗 -->
     <ModalSheet v-if="showForm" :title="editing ? '编辑任务' : '新建任务'" @close="showForm = false">
@@ -417,7 +402,7 @@ async function confirmRemove() {
   color: var(--text);
 }
 
-/* 背诵专区 */
+/* 学科分组 */
 .section-title__label {
   display: inline-flex;
   align-items: center;
@@ -426,28 +411,46 @@ async function confirmRemove() {
 .section-title__icon {
   color: var(--primary);
 }
-.recite-summary {
+.subject-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.subject-group {
+  padding: 16px;
+}
+.subject-group__head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 10px;
   padding-bottom: 10px;
+  margin-bottom: 4px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 6px;
 }
-.recite-summary__label {
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-.recite-summary__chips {
+.subject-group__title {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
 }
-.recite-zone__hint {
-  padding: 10px 0 2px;
-  font-size: 12.5px;
-  color: var(--text-muted);
+.subject-group__icon {
+  color: var(--primary);
+  flex: none;
+}
+.subject-group__name {
+  font-size: 15px;
+  font-weight: 620;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subject-group__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
 }
 
 .field-hint {

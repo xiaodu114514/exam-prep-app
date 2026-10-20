@@ -48,6 +48,16 @@ export interface Task {
   doneDate?: string | null
 }
 
+/** 可自定义的应用文案（留空表示使用默认值） */
+export interface AppTexts {
+  /** 应用名称，空 = 稳步备考 */
+  appName: string
+  /** 主页问候语，空 = 按时间自动（早上好/下午好/晚上好等） */
+  greeting: string
+  /** 主页口号，空 = 今天也要稳步推进 */
+  slogan: string
+}
+
 /** 应用整体持久化数据 */
 export interface AppData {
   version: number
@@ -55,6 +65,8 @@ export interface AppData {
   subjects: Subject[]
   sites: StudySite[]
   tasks: Task[]
+  /** 自定义文案（旧数据可能缺失，前端用默认值兜底） */
+  texts?: AppTexts
 }
 
 /** 登录用户信息（服务端会话只返回 name；本地模拟登录历史数据可能带 loggedInAt） */

@@ -11,6 +11,8 @@ import { registerTaskRoutes } from './routes/tasks'
 import { registerSubjectRoutes } from './routes/subjects'
 import { registerSiteRoutes } from './routes/sites'
 import { registerImportExportRoutes } from './routes/importExport'
+import { registerTextRoutes } from './routes/texts'
+import { registerAgentRoutes } from './routes/agent'
 
 export interface AppDeps {
   db: DB
@@ -86,6 +88,8 @@ export function buildApp(deps?: Partial<AppDeps>) {
   registerSubjectRoutes(app, db, auth)
   registerSiteRoutes(app, db, auth)
   registerImportExportRoutes(app, db, auth)
+  registerTextRoutes(app, db, auth)
+  registerAgentRoutes(app, db, config)
 
   return app
 }

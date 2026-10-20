@@ -106,7 +106,16 @@ export function normalizeData(parsed: unknown): AppData | null {
       amount: typeof t.amount === 'number' && Number.isFinite(t.amount) ? t.amount : null,
     }))
 
-  return { version, exam, subjects, sites, tasks }
+  // 自定义文案（旧数据缺失时补默认空值）
+  const texts = isRecord(parsed.texts)
+    ? {
+        appName: typeof parsed.texts.appName === 'string' ? parsed.texts.appName : '',
+        greeting: typeof parsed.texts.greeting === 'string' ? parsed.texts.greeting : '',
+        slogan: typeof parsed.texts.slogan === 'string' ? parsed.texts.slogan : '',
+      }
+    : { appName: '', greeting: '', slogan: '' }
+
+  return { version, exam, subjects, sites, tasks, texts }
 }
 
 /** 读取应用数据，无数据或结构损坏时返回 null（上层回退到种子数据） */

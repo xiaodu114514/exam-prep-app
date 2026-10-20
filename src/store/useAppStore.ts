@@ -1,5 +1,5 @@
 import { reactive, ref } from 'vue'
-import type { AppData, Exam, StudySite, Subject, Task, UserProfile } from '../types'
+import type { AppData, AppTexts, Exam, StudySite, Subject, Task, UserProfile } from '../types'
 import * as api from '../services/api'
 import { clearUser } from '../services/storage'
 import { useToast } from '../composables/useToast'
@@ -42,8 +42,23 @@ interface AppState {
   user: UserProfile | null
 }
 
+export const DEFAULT_TEXTS: AppTexts = { appName: '', greeting: '', slogan: '' }
+
 function emptyData(): AppData {
-  return { version: 1, exam: { name: '', date: '' }, subjects: [], sites: [], tasks: [] }
+  return {
+    version: 1,
+    exam: { name: '', date: '' },
+    subjects: [],
+    sites: [],
+    tasks: [],
+    texts: { ...DEFAULT_TEXTS },
+  }
+}
+
+/** 兼容旧数据：texts 缺失时使用默认值 */
+function normalizeTexts(data: AppData): AppData {
+  data.texts = data.texts ?? { ...DEFAULT_TEXTS }
+  return data
 }
 
 const state = reactive<AppState>({
@@ -90,7 +105,7 @@ export function useAppStore() {
       const me = await api.authMe()
       const data = await api.getData()
       state.user = { name: me.user.name }
-      state.data = data
+      state.data = normalizeTexts(data)
       authStatus.value = 'authenticated'
     } catch {
       // 未登录 / 会话失效 / 服务器不可达：一律 guest，不渲染私有数据
@@ -111,7 +126,7 @@ export function useAppStore() {
   /** 静默刷新全量数据；失败保持现有数据，绝不覆盖为空/种子 */
   async function refreshData(): Promise<void> {
     try {
-      state.data = await api.getData()
+      state.data = normalizeTexts(await api.getData())
     } catch {
       /* 保持现有数据 */
     }
@@ -126,7 +141,7 @@ export function useAppStore() {
       const res = await api.authLogin(username, password)
       const data = await api.getData()
       state.user = { name: res.user.name }
-      state.data = data
+      state.data = normalizeTexts(data)
       authStatus.value = 'authenticated'
       return { ok: true }
     } catch (e) {
@@ -305,10 +320,22 @@ export function useAppStore() {
     }
   }
 
+  // ---------- 自定义文案 ----------
+  async function updateTexts(patch: Partial<AppTexts>): Promise<boolean> {
+    try {
+      const { texts } = await api.updateTexts(patch)
+      state.data.texts = texts
+      return true
+    } catch (e) {
+      toastError(e)
+      return false
+    }
+  }
+
   // ---------- 数据管理 ----------
   /** 整份替换数据（阶段 3 服务器导入成功后使用） */
   function replaceData(data: AppData): void {
-    state.data = data
+    state.data = normalizeTexts(data)
   }
 
   return {
@@ -332,6 +359,7 @@ export function useAppStore() {
     updateSite,
     removeSite,
     updateExam,
+    updateTexts,
     replaceData,
   }
 }

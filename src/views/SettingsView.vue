@@ -54,6 +54,28 @@ async function saveExam() {
   }
 }
 
+// ---------- 自定义文案 ----------
+const textForm = reactive({
+  appName: store.state.data.texts?.appName ?? '',
+  greeting: store.state.data.texts?.greeting ?? '',
+  slogan: store.state.data.texts?.slogan ?? '',
+})
+const savingTexts = ref(false)
+
+async function saveTexts() {
+  savingTexts.value = true
+  try {
+    const ok = await store.updateTexts({
+      appName: textForm.appName,
+      greeting: textForm.greeting,
+      slogan: textForm.slogan,
+    })
+    if (ok) toast.success('文案已保存')
+  } finally {
+    savingTexts.value = false
+  }
+}
+
 // ---------- 科目管理 ----------
 const showSubjectForm = ref(false)
 const editingSubject = ref<Subject | null>(null)
@@ -200,6 +222,55 @@ function normalizeUrl(url: string) {
           @click="saveExam"
         >
           保存考试信息
+        </button>
+      </div>
+    </section>
+
+    <!-- 文案设置 -->
+    <section class="section">
+      <div class="section-title"><span>文案设置</span></div>
+      <div class="card">
+        <div class="field">
+          <label class="label" for="text-appname">应用名称（留空显示「稳步备考」）</label>
+          <input
+            id="text-appname"
+            v-model="textForm.appName"
+            class="input"
+            type="text"
+            maxlength="60"
+            placeholder="稳步备考"
+          />
+        </div>
+        <div class="field">
+          <label class="label" for="text-greeting">主页问候语（留空按时间自动显示）</label>
+          <input
+            id="text-greeting"
+            v-model="textForm.greeting"
+            class="input"
+            type="text"
+            maxlength="60"
+            placeholder="例如：晚上好"
+          />
+        </div>
+        <div class="field">
+          <label class="label" for="text-slogan">主页口号（留空显示「今天也要稳步推进」）</label>
+          <input
+            id="text-slogan"
+            v-model="textForm.slogan"
+            class="input"
+            type="text"
+            maxlength="60"
+            placeholder="今天也要稳步推进"
+          />
+        </div>
+        <button
+          class="btn btn--primary btn--block"
+          type="button"
+          style="margin-top: 6px"
+          :disabled="savingTexts"
+          @click="saveTexts"
+        >
+          保存文案
         </button>
       </div>
     </section>

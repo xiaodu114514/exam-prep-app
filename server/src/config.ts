@@ -9,6 +9,8 @@ export interface Config {
   cookieSecure: boolean
   /** 是否信任反向代理头（Nginx 之后取真实 IP 用于限流） */
   trustProxy: boolean
+  /** Agent 开放接口的 API Key（逗号分隔支持多个；空 = 接口禁用） */
+  agentApiKey: string
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -21,5 +23,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       (Number.isFinite(ttlDays) && ttlDays > 0 ? ttlDays : 7) * 24 * 60 * 60 * 1000,
     cookieSecure: env.COOKIE_SECURE === '1',
     trustProxy: env.TRUST_PROXY === '1',
+    agentApiKey: env.AGENT_API_KEY ?? '',
   }
 }

@@ -266,3 +266,42 @@ describe('每日任务：tasksOn 按天展开', () => {
     expect(store.tasksOn('2025-11-10')).toHaveLength(0)
   })
 })
+
+describe('自定义文案', () => {
+  it('updateTexts 更新到 state', async () => {
+    vi.mocked(api.authMe).mockResolvedValue({ user: { name: 'admin' } })
+    vi.mocked(api.getData).mockResolvedValue(makeData())
+    const store = useAppStore()
+    await store.init()
+
+    vi.mocked(api.updateTexts).mockResolvedValue({
+      texts: { appName: '我的备考', greeting: '晚上好', slogan: '冲' },
+    })
+    const ok = await store.updateTexts({ appName: '我的备考' })
+    expect(ok).toBe(true)
+    expect(store.state.data.texts?.appName).toBe('我的备考')
+  })
+
+  it('旧数据无 texts 字段时自动补默认值', async () => {
+    vi.mocked(api.authMe).mockResolvedValue({ user: { name: 'admin' } })
+    const data = makeData() as Partial<AppData>
+    delete data.texts
+    vi.mocked(api.getData).mockResolvedValue(data as AppData)
+    const store = useAppStore()
+    await store.init()
+    expect(store.state.data.texts).toEqual({ appName: '', greeting: '', slogan: '' })
+  })
+
+  it('updateTexts 失败返回 false 且不覆盖现有文案', async () => {
+    vi.mocked(api.authMe).mockResolvedValue({ user: { name: 'admin' } })
+    vi.mocked(api.getData).mockResolvedValue(makeData())
+    const store = useAppStore()
+    await store.init()
+    store.state.data.texts = { appName: '旧名字', greeting: '', slogan: '' }
+
+    vi.mocked(api.updateTexts).mockRejectedValue(new Error('服务器内部错误'))
+    const ok = await store.updateTexts({ appName: '新名字' })
+    expect(ok).toBe(false)
+    expect(store.state.data.texts?.appName).toBe('旧名字')
+  })
+})

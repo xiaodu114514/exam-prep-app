@@ -95,4 +95,16 @@ describe('主页：今日任务完成情况', () => {
     expect(vi.mocked(api.patchTask)).toHaveBeenCalledWith(first.id, { completed: false })
     expect(store.state.data.tasks.find((t) => t.id === first.id)?.completed).toBe(false)
   })
+
+  it('自定义问候语与口号优先渲染，留空回退默认', async () => {
+    const store = useAppStore()
+    store.state.data.texts = { appName: '', greeting: '晚上好', slogan: '冲鸭' }
+    const wrapper = await mountHome()
+    expect(wrapper.text()).toContain('晚上好')
+    expect(wrapper.text()).toContain('冲鸭')
+
+    store.state.data.texts = { appName: '', greeting: '', slogan: '' }
+    const wrapper2 = await mountHome()
+    expect(wrapper2.text()).toContain('今天也要稳步推进')
+  })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { GraduationCap, Lock, LogIn, UserRound } from 'lucide-vue-next'
 import { useAppStore } from '../store/useAppStore'
@@ -7,6 +7,11 @@ import { useAppStore } from '../store/useAppStore'
 const store = useAppStore()
 const router = useRouter()
 const route = useRoute()
+
+const appName = computed(() => {
+  const custom = store.state.data.texts?.appName?.trim()
+  return custom ? custom : '稳步备考'
+})
 
 const form = reactive({ username: '', password: '' })
 const error = ref('')
@@ -45,7 +50,7 @@ async function submit() {
         <span class="login__logo">
           <GraduationCap :size="26" />
         </span>
-        <h1 class="login__name">稳步备考</h1>
+        <h1 class="login__name">{{ appName }}</h1>
       </div>
       <p class="login__sub">登录后开始今天的学习</p>
 

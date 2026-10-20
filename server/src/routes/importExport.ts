@@ -47,6 +47,7 @@ export interface ImportedData {
   subjects: ImportedSubject[]
   sites: ImportedSite[]
   tasks: ImportedTask[]
+  texts: { appName: string; greeting: string; slogan: string }
 }
 
 export type NormalizeResult = { ok: true; data: ImportedData } | { ok: false; error: string }
@@ -137,7 +138,19 @@ export function normalizeImport(raw: unknown): NormalizeResult {
 
   return {
     ok: true,
-    data: { exam: { name: examName, date: examDate }, subjects, sites, tasks },
+    data: {
+      exam: { name: examName, date: examDate },
+      subjects,
+      sites,
+      tasks,
+      texts: {
+        appName:
+          isRecord(raw.texts) && typeof raw.texts.appName === 'string' ? raw.texts.appName : '',
+        greeting:
+          isRecord(raw.texts) && typeof raw.texts.greeting === 'string' ? raw.texts.greeting : '',
+        slogan: isRecord(raw.texts) && typeof raw.texts.slogan === 'string' ? raw.texts.slogan : '',
+      },
+    },
   }
 }
 
@@ -166,6 +179,11 @@ export function registerImportExportRoutes(app: FastifyInstance, db: DB, auth: A
     db.prepare(`DELETE FROM subjects`).run()
     db.prepare(`DELETE FROM sites`).run()
     db.prepare(`UPDATE exam SET name = ?, date = ? WHERE id = 1`).run(data.exam.name, data.exam.date)
+    db.prepare(`UPDATE app_texts SET app_name = ?, greeting = ?, slogan = ? WHERE id = 1`).run(
+      data.texts.appName,
+      data.texts.greeting,
+      data.texts.slogan,
+    )
 
     const insSubject = db.prepare(
       `INSERT INTO subjects (id, name, unit, total, completed) VALUES (?, ?, ?, ?, ?)`,

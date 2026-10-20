@@ -19,13 +19,29 @@ const store = useAppStore()
 const router = useRouter()
 const today = todayKey()
 
-const greeting = computed(() => {
+const texts = computed(
+  () => store.state.data.texts ?? { appName: '', greeting: '', slogan: '' },
+)
+
+const autoGreeting = computed(() => {
   const h = new Date().getHours()
   if (h < 6) return '夜深了，注意休息'
   if (h < 11) return '早上好'
   if (h < 14) return '中午好'
   if (h < 18) return '下午好'
   return '晚上好'
+})
+
+/** 自定义问候语优先，留空按时间自动 */
+const greeting = computed(() => {
+  const custom = texts.value.greeting.trim()
+  return custom !== '' ? custom : autoGreeting.value
+})
+
+/** 自定义口号优先，留空使用默认 */
+const slogan = computed(() => {
+  const custom = texts.value.slogan.trim()
+  return custom !== '' ? custom : '今天也要稳步推进'
 })
 
 const exam = computed(() => store.state.data.exam)
@@ -78,7 +94,7 @@ function normalizeUrl(url: string) {
   <div class="page">
     <header class="home-hero">
       <p class="home-hero__greet">{{ greeting }}</p>
-      <h1 class="home-hero__slogan">今天也要稳步推进</h1>
+      <h1 class="home-hero__slogan">{{ slogan }}</h1>
       <p class="home-hero__date">{{ formatDateLong(today) }}</p>
     </header>
 

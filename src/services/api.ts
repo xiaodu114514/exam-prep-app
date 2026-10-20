@@ -1,4 +1,4 @@
-import type { AppData, Exam, StudySite, Subject, Task } from '../types'
+import type { AppData, AppTexts, Exam, StudySite, Subject, Task } from '../types'
 
 /**
  * 后端 API 统一封装：
@@ -74,6 +74,10 @@ export const authLogout = () => request<{ ok: boolean }>('POST', '/api/auth/logo
 export const getData = () => request<AppData>('GET', '/api/data')
 
 export const updateExam = (exam: Exam) => request<{ exam: Exam }>('PUT', '/api/exam', exam)
+
+// ---------- 自定义文案 ----------
+export const updateTexts = (patch: Partial<AppTexts>) =>
+  request<{ texts: AppTexts }>('PUT', '/api/texts', patch)
 
 // ---------- 任务 ----------
 export interface TaskPatchInput {

@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify'
 import type { DB, ExamRow, SiteRow, SubjectRow, TaskRow } from '../db'
 import { toSiteDto, toSubjectDto, toTaskDto } from './shared'
+import { readTexts } from './texts'
 import type { AuthPreHandler } from './tasks'
 
-/** 读取全量业务数据（与前端 AppData 形状一致，version: 1） */
+/** 读取全量业务数据（与前端 AppData 形状一致） */
 export function readAllData(db: DB) {
   const exam = db.prepare(`SELECT id, name, date FROM exam WHERE id = 1`).get() as ExamRow
   const subjects = db
@@ -18,6 +19,7 @@ export function readAllData(db: DB) {
     subjects: subjects.map(toSubjectDto),
     sites: sites.map(toSiteDto),
     tasks: tasks.map(toTaskDto),
+    texts: readTexts(db),
   }
 }
 
