@@ -2,7 +2,6 @@
 
 极简、清爽、移动优先的个人备考管理工具。前端 Vue 3 + TypeScript + Vite，后端 Fastify + SQLite，支持 PWA 离线访问与 Agent 开放接口。
 
-- **线上地址**：https://study.xiaodu0315.top
 - **源码仓库**：https://github.com/xiaodu114514/exam-prep-app
 
 ## 功能
