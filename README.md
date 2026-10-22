@@ -1,4 +1,4 @@
-# 稳步备考
+# 备考平台
 
 极简、清爽、移动优先的个人备考管理工具。前端 Vue 3 + TypeScript + Vite，后端 Fastify + SQLite，支持 PWA 离线访问与 Agent 开放接口。
 
