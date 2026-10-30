@@ -87,6 +87,8 @@ export interface TaskPatchInput {
   subjectId?: string | null
   amount?: number | null
   daily?: boolean
+  /** 完成时填写的实际完成量（勾选完成时可选） */
+  completedAmount?: number | null
 }
 
 export const createTask = (input: {

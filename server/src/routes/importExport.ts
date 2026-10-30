@@ -40,6 +40,8 @@ export interface ImportedTask {
   contributed: number
   daily: boolean
   doneDate: string | null
+  /** 完成时填写的实际完成量（未填写时为 null） */
+  completedAmount: number | null
 }
 
 export interface ImportedData {
@@ -123,6 +125,12 @@ export function normalizeImport(raw: unknown): NormalizeResult {
       typeof item.amount === 'number' && Number.isFinite(item.amount) && item.amount > 0
         ? item.amount
         : null
+    const completedAmount =
+      completed && typeof item.completedAmount === 'number' && Number.isFinite(item.completedAmount) && item.completedAmount >= 0
+        ? item.completedAmount
+        : null
+    // 贡献按实际完成量（导入数据为自洽快照，任务完成时按 completedAmount 或计划量计）
+    const effectiveAmount = completedAmount ?? amount
     tasks.push({
       id: typeof item.id === 'string' && item.id !== '' ? item.id : `task_imported_${tasks.length + 1}`,
       title: typeof item.title === 'string' && item.title.trim() !== '' ? item.title.trim() : '未命名任务',
@@ -130,9 +138,10 @@ export function normalizeImport(raw: unknown): NormalizeResult {
       completed,
       subjectId,
       amount,
-      contributed: completed && subjectId && amount !== null ? amount : 0,
+      contributed: completed && subjectId && effectiveAmount !== null ? effectiveAmount : 0,
       daily,
       doneDate,
+      completedAmount,
     })
   }
 
@@ -194,8 +203,8 @@ export function registerImportExportRoutes(app: FastifyInstance, db: DB, auth: A
     for (const s of data.sites) insSite.run(s.id, s.name, s.url)
 
     const insTask = db.prepare(
-      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, daily, done_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, daily, done_date, completed_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     for (const t of data.tasks) {
       insTask.run(
@@ -208,6 +217,7 @@ export function registerImportExportRoutes(app: FastifyInstance, db: DB, auth: A
         t.contributed,
         t.daily ? 1 : 0,
         t.doneDate,
+        t.completedAmount,
       )
     }
     return backupId

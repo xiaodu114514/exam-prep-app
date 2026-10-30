@@ -179,14 +179,21 @@ export function useAppStore() {
   /**
    * 切换完成状态：乐观翻转 -> PATCH -> 用服务端响应（task + subject）替换本地状态；
    * 失败回滚。背诵贡献完全由服务端事务计算，前端不叠加。
+   * @param completedAmount 完成时填写的实际完成量（可选，默认使用任务计划量）
    */
-  async function toggleTask(id: string): Promise<{ task: Task; subject: Subject | null } | null> {
+  async function toggleTask(
+    id: string,
+    completedAmount?: number,
+  ): Promise<{ task: Task; subject: Subject | null } | null> {
     const t = state.data.tasks.find((x) => x.id === id)
     if (!t) return null
     const prev = t.completed
     t.completed = !prev
     try {
-      const res = await api.patchTask(id, { completed: !prev })
+      const res = await api.patchTask(id, {
+        completed: !prev,
+        ...(completedAmount !== undefined ? { completedAmount } : {}),
+      })
       replaceTask(res.task)
       if (res.subject) replaceSubject(res.subject)
       return { task: res.task, subject: res.subject }

@@ -164,6 +164,21 @@ describe('业务 action：成功 / 失败 / 回滚', () => {
     expect(store.state.data.tasks[0].completed).toBe(false)
   })
 
+  it('toggleTask 带实际完成量时请求携带 completedAmount', async () => {
+    const store = await authedStore()
+    const task = store.state.data.tasks[0]
+    const serverTask = { ...task, completed: true, completedAmount: 30, contributed: 30 }
+    const serverSubject = { id: 's1', name: '英语', unit: '单词', total: 100, completed: 40 }
+    vi.mocked(api.patchTask).mockResolvedValue({ task: serverTask, subject: serverSubject })
+
+    const result = await store.toggleTask(task.id, 30)
+    expect(result?.task.completedAmount).toBe(30)
+    expect(vi.mocked(api.patchTask)).toHaveBeenCalledWith(task.id, {
+      completed: true,
+      completedAmount: 30,
+    })
+  })
+
   it('addTask：成功插入服务器返回实体，失败不插入', async () => {
     const store = await authedStore()
     const newTask = {

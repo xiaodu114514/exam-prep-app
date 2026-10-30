@@ -42,6 +42,8 @@ export interface Task {
   amount: number | null
   /** 服务端计算的任务对科目的实际贡献量（后端 API 返回；本地旧数据无此字段） */
   contributed?: number
+  /** 完成任务时填写的实际完成量（未完成或未填写时为 null） */
+  completedAmount?: number | null
   /** 每日任务：从创建日起每天自动出现在任务列表，完成状态按天独立 */
   daily?: boolean
   /** 每日任务最近完成日期（YYYY-MM-DD） */

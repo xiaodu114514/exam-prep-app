@@ -343,3 +343,147 @@ describe('每日任务（daily）', () => {
     expect(subjectCompleted(db, subjectId)).toBe(30)
   })
 })
+
+describe('实际完成量（completedAmount）', () => {
+  function today(): string {
+    const d = new Date()
+    const p = (n: number) => (n < 10 ? `0${n}` : String(n))
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
+
+  async function createTask(app: ReturnType<typeof createTestApp>['app'], cookie: string, subjectId: string, amount = 50) {
+    const created = await authedRequest(app, cookie, 'POST', '/api/tasks', {
+      title: '背单词',
+      date: today(),
+      subjectId,
+      amount,
+    })
+    return created.json().task.id as string
+  }
+
+  it('完成任务时按填写的实际完成量累计贡献', async () => {
+    const { app, db, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const taskId = await createTask(app, cookie, subjectId, 50)
+
+    const done = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      completedAmount: 30,
+    })
+    expect(done.statusCode).toBe(200)
+    expect(done.json().task.completed).toBe(true)
+    expect(done.json().task.completedAmount).toBe(30)
+    expect(done.json().task.contributed).toBe(30)
+    expect(subjectCompleted(db, subjectId)).toBe(30)
+  })
+
+  it('不填实际完成量时使用计划量（兼容旧行为）', async () => {
+    const { app, db, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const taskId = await createTask(app, cookie, subjectId, 50)
+
+    const done = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, { completed: true })
+    expect(done.json().task.contributed).toBe(50)
+    expect(subjectCompleted(db, subjectId)).toBe(50)
+  })
+
+  it('取消完成按实际完成量精确撤销', async () => {
+    const { app, db, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const taskId = await createTask(app, cookie, subjectId, 50)
+    await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      completedAmount: 30,
+    })
+    expect(subjectCompleted(db, subjectId)).toBe(30)
+
+    const undone = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, { completed: false })
+    expect(undone.json().task.completedAmount).toBeNull()
+    expect(subjectCompleted(db, subjectId)).toBe(0)
+  })
+
+  it('已完成任务再次提交实际完成量会重算贡献', async () => {
+    const { app, db, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const taskId = await createTask(app, cookie, subjectId, 50)
+    await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      completedAmount: 30,
+    })
+    expect(subjectCompleted(db, subjectId)).toBe(30)
+
+    const res = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      completedAmount: 20,
+    })
+    expect(res.json().task.completedAmount).toBe(20)
+    expect(subjectCompleted(db, subjectId)).toBe(20)
+  })
+
+  it('实际完成量受科目总量上限约束', async () => {
+    const { app, db, subjectId } = setupSubject()
+    db.prepare(`UPDATE subjects SET completed = 95 WHERE id = ?`).run(subjectId)
+    const { cookie } = await login(app)
+    const taskId = await createTask(app, cookie, subjectId, 10)
+
+    const done = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      completedAmount: 10,
+    })
+    expect(done.json().task.contributed).toBe(5)
+    expect(subjectCompleted(db, subjectId)).toBe(100)
+  })
+
+  it('用户填写过实际量后，编辑计划量不改变实际完成量', async () => {
+    const { app, db, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const taskId = await createTask(app, cookie, subjectId, 50)
+    await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      completedAmount: 30,
+    })
+    expect(subjectCompleted(db, subjectId)).toBe(30)
+
+    const edited = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, { amount: 60 })
+    expect(edited.json().task.completedAmount).toBe(30)
+    expect(edited.json().task.contributed).toBe(30)
+    expect(subjectCompleted(db, subjectId)).toBe(30)
+  })
+
+  it('负数实际完成量返回 400', async () => {
+    const { app, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const taskId = await createTask(app, cookie, subjectId, 50)
+
+    const res = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      completedAmount: -1,
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('每日任务完成时记录当天实际完成量', async () => {
+    const { app, db, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const created = await authedRequest(app, cookie, 'POST', '/api/tasks', {
+      title: '每日背单词',
+      date: today(),
+      subjectId,
+      amount: 40,
+      daily: true,
+    })
+    const taskId = created.json().task.id as string
+
+    const done = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      completedAmount: 25,
+    })
+    expect(done.json().task.completedAmount).toBe(25)
+    expect(done.json().task.contributed).toBe(25)
+    expect(subjectCompleted(db, subjectId)).toBe(25)
+
+    const undone = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, { completed: false })
+    expect(undone.json().task.completedAmount).toBeNull()
+    expect(subjectCompleted(db, subjectId)).toBe(0)
+  })
+})

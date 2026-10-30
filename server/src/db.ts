@@ -55,6 +55,8 @@ export interface TaskRow {
   contributed: number
   daily: number
   done_date: string | null
+  /** 完成时填写的实际完成量（NULL = 未填写，使用计划量 amount） */
+  completed_amount: number | null
 }
 
 const SCHEMA_V1_SQL = `
@@ -116,11 +118,11 @@ CREATE TABLE IF NOT EXISTS data_backups (
 `
 
 /** 当前程序支持的 schema 版本（与 PRAGMA user_version 对应） */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 /**
  * 迁移步骤列表：索引 = 当前 user_version，执行后写入 user_version = 索引 + 1。
- * 未来结构变更时追加新步骤（例如 v3 -> v4 时在数组末尾加一个函数）。
+ * 未来结构变更时追加新步骤（例如 v4 -> v5 时在数组末尾加一个函数）。
  */
 const MIGRATIONS: Array<(db: DB) => void> = [
   (db) => {
@@ -146,6 +148,10 @@ const MIGRATIONS: Array<(db: DB) => void> = [
     db.prepare(
       `INSERT OR IGNORE INTO app_texts (id, app_name, greeting, slogan) VALUES (1, '', '', '')`,
     ).run()
+  },
+  // v4：完成任务时记录实际完成量（未填写时用计划量 amount）
+  (db) => {
+    db.exec(`ALTER TABLE tasks ADD COLUMN completed_amount REAL;`)
   },
 ]
 

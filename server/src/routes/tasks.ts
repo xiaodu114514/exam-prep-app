@@ -15,6 +15,8 @@ export interface TaskPatch {
   subjectId?: string | null
   amount?: number | null
   daily?: boolean
+  /** 完成时填写的实际完成量（可选，默认使用计划量） */
+  completedAmount?: number | null
 }
 
 interface NextTaskState {
@@ -25,6 +27,7 @@ interface NextTaskState {
   amount: number | null
   daily: 0 | 1
   done_date: string | null
+  completed_amount: number | null
 }
 
 function findTask(db: DB, id: string): TaskRow | undefined {
@@ -138,6 +141,29 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
       }
     }
 
+    // 实际完成量：完成时记录（默认沿用旧值或计划量），取消完成时清空。
+    // 规则：未主动填写实际量（completed_amount == amount）时，编辑计划量会同步；
+    //       用户填写过实际量时，编辑计划量不改变实际完成量。
+    let nextCompletedAmount = old.completed_amount
+    if (patch.completed !== undefined) {
+      if (patch.completed) {
+        nextCompletedAmount =
+          patch.completedAmount !== undefined
+            ? patch.completedAmount
+            : (old.completed_amount ?? old.amount)
+      } else {
+        nextCompletedAmount = null
+      }
+    } else if (patch.completedAmount !== undefined) {
+      nextCompletedAmount = patch.completedAmount
+    } else if (
+      patch.amount !== undefined &&
+      old.completed_amount !== null &&
+      old.completed_amount === old.amount
+    ) {
+      nextCompletedAmount = patch.amount
+    }
+
     const next: NextTaskState = {
       title: patch.title !== undefined ? patch.title : old.title,
       date: patch.date !== undefined ? patch.date : old.date,
@@ -146,23 +172,25 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
       amount: patch.amount !== undefined ? patch.amount : old.amount,
       daily: nextDaily,
       done_date: nextDoneDate,
+      completed_amount: nextCompletedAmount,
     }
     if (next.subject_id && next.subject_id !== old.subject_id) ensureSubjectExists(db, next.subject_id)
 
-    // 3) 应用新贡献
+    // 3) 应用新贡献（按实际完成量计算：completed_amount 优先，未填写则用计划量）
     const newDone = next.daily === 1 ? next.done_date === today : next.completed === 1
+    const effectiveAmount = newDone ? (next.completed_amount ?? next.amount) : null
     let contributed = 0
-    if (newDone && next.subject_id && next.amount && next.amount > 0) {
+    if (newDone && next.subject_id && effectiveAmount && effectiveAmount > 0) {
       const subject = findSubject(db, next.subject_id)
       if (subject) {
-        const res = computeCompletion(subject, next.amount)
+        const res = computeCompletion(subject, effectiveAmount)
         contributed = res.contributed
         db.prepare(`UPDATE subjects SET completed = ? WHERE id = ?`).run(res.completed, subject.id)
       }
     }
 
     db.prepare(
-      `UPDATE tasks SET title=?, date=?, completed=?, subject_id=?, amount=?, contributed=?, daily=?, done_date=? WHERE id=?`,
+      `UPDATE tasks SET title=?, date=?, completed=?, subject_id=?, amount=?, contributed=?, daily=?, done_date=?, completed_amount=? WHERE id=?`,
     ).run(
       next.title,
       next.date,
@@ -172,6 +200,7 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
       contributed,
       next.daily,
       next.done_date,
+      next.completed_amount,
       id,
     )
 
@@ -196,6 +225,12 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
     if (body.daily !== undefined) {
       if (typeof body.daily !== 'boolean') throw badRequest('daily 必须是布尔值')
       patch.daily = body.daily
+    }
+    if (body.completedAmount !== undefined) {
+      patch.completedAmount = optionalNumber(body.completedAmount, '实际完成量')
+      if (patch.completedAmount !== null && patch.completedAmount < 0) {
+        throw badRequest('实际完成量必须是不小于 0 的数字')
+      }
     }
 
     // 背诵量校验需要考虑“本请求是否会改变科目”

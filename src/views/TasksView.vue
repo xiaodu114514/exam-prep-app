@@ -10,6 +10,7 @@ import TaskRow from '../components/TaskRow.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalSheet from '../components/ModalSheet.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import CompleteTaskDialog from '../components/CompleteTaskDialog.vue'
 
 const store = useAppStore()
 const toast = useToast()
@@ -72,12 +73,31 @@ function goToday() {
   selectedDate.value = today
 }
 
-// ---------- 任务勾选（背诵联动：以服务端响应为准，前端不计算贡献） ----------
+// ---------- 任务勾选（有任务量的任务完成时弹窗填写实际完成量） ----------
+const completing = ref<Task | null>(null)
+const completingSubject = computed(() => store.getSubject(completing.value?.subjectId ?? null))
+
 async function onToggle(id: string) {
-  const result = await store.toggleTask(id)
+  const task = dayTasks.value.find((t) => t.id === id)
+  if (!task) return
+  if (task.completed) {
+    // 取消完成：直接撤销，无需弹窗
+    await doToggle(id)
+    return
+  }
+  if (task.amount != null && task.amount > 0) {
+    // 有任务量：弹窗填写实际完成量（默认计划量）
+    completing.value = task
+    return
+  }
+  await doToggle(id)
+}
+
+async function doToggle(id: string, actualAmount?: number) {
+  const result = await store.toggleTask(id, actualAmount)
   if (!result) return
   const { task, subject } = result
-  const amount = task.amount ?? 0
+  const amount = task.completedAmount ?? task.amount ?? 0
   if (subject && amount > 0) {
     if (task.completed) {
       const contributed = task.contributed ?? amount
@@ -86,6 +106,13 @@ async function onToggle(id: string) {
       toast.info(`已撤销「${subject.name}」的背诵贡献`)
     }
   }
+}
+
+async function confirmComplete(amount: number) {
+  if (!completing.value) return
+  const id = completing.value.id
+  completing.value = null
+  await doToggle(id, amount)
 }
 
 // ---------- 表单 ----------
@@ -342,6 +369,15 @@ async function confirmRemove() {
       confirm-text="删除"
       @confirm="confirmRemove"
       @cancel="confirmTarget = null"
+    />
+
+    <CompleteTaskDialog
+      v-if="completing"
+      :task="completing"
+      :subject-name="completingSubject?.name"
+      :subject-unit="completingSubject?.unit"
+      @close="completing = null"
+      @confirm="confirmComplete"
     />
   </div>
 </template>

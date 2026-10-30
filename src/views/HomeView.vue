@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowRight,
@@ -14,6 +14,7 @@ import { daysBetween, formatDateLong, todayKey } from '../utils/date'
 import type { Task } from '../types'
 import ProgressBar from '../components/ProgressBar.vue'
 import EmptyState from '../components/EmptyState.vue'
+import CompleteTaskDialog from '../components/CompleteTaskDialog.vue'
 
 const store = useAppStore()
 const router = useRouter()
@@ -60,8 +61,27 @@ const totalCount = computed(() => todayTasks.value.length)
 const subjects = computed(() => store.state.data.subjects)
 const sites = computed(() => store.state.data.sites)
 
-function toggleTask(id: string) {
-  store.toggleTask(id)
+// ---------- 任务勾选（有任务量的任务完成时弹窗填写实际完成量） ----------
+const completing = ref<Task | null>(null)
+const completingSubject = computed(() => store.getSubject(completing.value?.subjectId ?? null))
+
+async function onToggleTask(task: Task) {
+  if (task.completed) {
+    await store.toggleTask(task.id)
+    return
+  }
+  if (task.amount != null && task.amount > 0) {
+    completing.value = task
+    return
+  }
+  await store.toggleTask(task.id)
+}
+
+async function confirmComplete(amount: number) {
+  if (!completing.value) return
+  const id = completing.value.id
+  completing.value = null
+  await store.toggleTask(id, amount)
 }
 
 function subjectOf(task: Task) {
@@ -142,7 +162,7 @@ function normalizeUrl(url: string) {
             :key="task.id"
             class="home-task"
             type="button"
-            @click="toggleTask(task.id)"
+            @click="onToggleTask(task)"
           >
             <span class="home-task__check" :class="{ 'home-task__check--done': task.completed }">
               <Check v-if="task.completed" :size="14" :stroke-width="3" />
@@ -241,6 +261,15 @@ function normalizeUrl(url: string) {
         />
       </div>
     </section>
+
+    <CompleteTaskDialog
+      v-if="completing"
+      :task="completing"
+      :subject-name="completingSubject?.name"
+      :subject-unit="completingSubject?.unit"
+      @close="completing = null"
+      @confirm="confirmComplete"
+    />
   </div>
 </template>
 
