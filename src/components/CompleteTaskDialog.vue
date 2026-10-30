@@ -40,10 +40,6 @@ function submit() {
   }
   emit('confirm', n)
 }
-
-function quickFill() {
-  if (props.task.amount != null) form.amount = String(props.task.amount)
-}
 </script>
 
 <template>
@@ -64,12 +60,7 @@ function quickFill() {
         inputmode="numeric"
         placeholder="请输入实际完成量"
       />
-      <div class="complete-task__quick">
-        <button class="btn btn--ghost btn--sm" type="button" @click="quickFill">
-          按计划量填写
-        </button>
-        <span class="complete-task__tip">按实际完成量累计到「{{ subjectName ?? '该科目' }}」的背诵进度</span>
-      </div>
+      <p class="complete-task__tip">按实际完成量累计到「{{ subjectName ?? '该科目' }}」的背诵进度</p>
     </div>
 
     <p v-if="error" class="field-error">{{ error }}</p>
@@ -98,14 +89,8 @@ function quickFill() {
   color: var(--text);
   font-weight: 650;
 }
-.complete-task__quick {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
 .complete-task__tip {
+  margin-top: 8px;
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.4;

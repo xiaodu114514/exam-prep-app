@@ -51,11 +51,4 @@ describe('完成任务弹窗', () => {
     await w.find('.btn--primary').trigger('click')
     expect(w.text()).toContain('不小于 0')
   })
-
-  it('「按计划量填写」恢复默认值', async () => {
-    const w = mountDialog()
-    await w.find('#actual-amount').setValue('10')
-    await w.find('.complete-task__quick .btn').trigger('click')
-    expect((w.find('#actual-amount').element as HTMLInputElement).value).toBe('50')
-  })
 })
