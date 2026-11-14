@@ -4,6 +4,7 @@ import type { Config } from '../config'
 import type { DB, ExamRow, SubjectRow, TaskRow } from '../db'
 import { AppError, badRequest, unauthorized } from '../errors'
 import { optionalNumber, optionalString, requireDateKey, requireString } from '../validation'
+import { createTaskOperations } from './tasks'
 import { toTaskDto, todayKeyLocal } from './shared'
 
 /**
@@ -75,9 +76,14 @@ function tasksOn(db: DB, day: string): TaskRow[] {
     .all(day, day) as TaskRow[]
 }
 
-/** 任务在某天的有效完成态（每日任务只有今天真实可知） */
-function isDoneOn(t: TaskRow, day: string, today: string): boolean {
-  if (t.daily === 1) return day === today && t.done_date === today
+/** 任务在某天的有效完成态：每日任务查该天的 completion 记录，普通任务看 completed */
+function isDoneOn(db: DB, t: TaskRow, day: string): boolean {
+  if (t.daily === 1) {
+    const row = db
+      .prepare(`SELECT 1 AS ok FROM task_completions WHERE task_id = ? AND date = ?`)
+      .get(t.id, day)
+    return row !== undefined
+  }
   return t.completed === 1
 }
 
@@ -86,7 +92,7 @@ function buildStats(db: DB, date: string) {
   const week = getWeekRange(date)
 
   const dayRows = tasksOn(db, date)
-  const dayDone = dayRows.filter((t) => isDoneOn(t, date, today))
+  const dayDone = dayRows.filter((t) => isDoneOn(db, t, date))
 
   const subjects = db
     .prepare(`SELECT id, name, unit, total, completed FROM subjects ORDER BY rowid`)
@@ -98,7 +104,7 @@ function buildStats(db: DB, date: string) {
       return {
         subjectId: s.id,
         name: s.name,
-        done: rows.filter((t) => isDoneOn(t, date, today)).length,
+        done: rows.filter((t) => isDoneOn(db, t, date)).length,
         total: rows.length,
       }
     })
@@ -106,7 +112,7 @@ function buildStats(db: DB, date: string) {
 
   const weekDays = week.days.map((day) => {
     const rows = tasksOn(db, day)
-    const done = rows.filter((t) => isDoneOn(t, day, today)).length
+    const done = rows.filter((t) => isDoneOn(db, t, day)).length
     return { date: day, total: rows.length, done }
   })
   const weekTotal = weekDays.reduce((s, d) => s + d.total, 0)
@@ -131,7 +137,7 @@ function buildStats(db: DB, date: string) {
         return {
           id: t.id,
           title: t.title,
-          completed: isDoneOn(t, date, today),
+          completed: isDoneOn(db, t, date),
           subjectId: t.subject_id,
           subjectName: subject?.name ?? null,
           amount: t.amount,
@@ -212,17 +218,54 @@ export function registerAgentRoutes(app: FastifyInstance, db: DB, config: Config
       typeof query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.date)
         ? query.date
         : todayKeyLocal()
-    const today = todayKeyLocal()
     return {
       date,
       tasks: tasksOn(db, date).map((t) => ({
         id: t.id,
         title: t.title,
-        completed: isDoneOn(t, date, today),
+        completed: isDoneOn(db, t, date),
         subjectId: t.subject_id,
         amount: t.amount,
         daily: t.daily === 1,
       })),
     }
+  })
+
+  const { patchTask, deleteTask } = createTaskOperations(db)
+
+  /**
+   * 打勾完成 / 取消完成：
+   * body: { completed?: boolean（默认 true）, doneDate?: YYYY-MM-DD（每日任务，默认今天）, completedAmount?: number }
+   * 每日任务按「任务 + 日期」记录，重复提交幂等。
+   */
+  app.post('/api/agent/tasks/:id/complete', { preHandler: agentAuth }, async (req) => {
+    const { id } = req.params as { id: string }
+    const body = (req.body ?? {}) as Record<string, unknown>
+
+    const completed = body.completed === undefined ? true : body.completed
+    if (typeof completed !== 'boolean') throw badRequest('completed 必须是布尔值')
+
+    const doneDate =
+      body.doneDate !== undefined ? requireDateKey(body.doneDate, '完成日期') : undefined
+    const completedAmount =
+      body.completedAmount !== undefined
+        ? optionalNumber(body.completedAmount, '实际完成量')
+        : undefined
+    if (completedAmount !== undefined && completedAmount !== null && completedAmount < 0) {
+      throw badRequest('实际完成量必须是不小于 0 的数字')
+    }
+
+    return patchTask(id, {
+      completed,
+      ...(doneDate !== undefined ? { doneDate } : {}),
+      ...(completedAmount !== undefined && completedAmount !== null ? { completedAmount } : {}),
+    })
+  })
+
+  /** 删除任务（撤销其全部贡献） */
+  app.delete('/api/agent/tasks/:id', { preHandler: agentAuth }, async (req) => {
+    const { id } = req.params as { id: string }
+    deleteTask(id)
+    return { ok: true }
   })
 }

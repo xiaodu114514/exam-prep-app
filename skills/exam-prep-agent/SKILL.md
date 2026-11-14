@@ -93,11 +93,33 @@ description: 稳步备考（exam-prep）学习管理技能。通过 HTTP API 添
 }
 ```
 
+### 4. 打勾完成 / 取消 `POST /api/agent/tasks/:id/complete`
+
+```json
+{
+  "completed": true,            // 可选，默认 true；false = 取消完成
+  "doneDate": "2026-10-21",     // 可选，每日任务要完成/取消的日期（默认今天）
+  "completedAmount": 30         // 可选，实际完成量（默认任务计划量）
+}
+```
+
+成功返回 `{ "task": {…}, "subject": {…} | null }`。
+
+- 每日任务按「任务 + 日期」独立记录：`doneDate` 指定哪天就完成/取消哪天，**互不影响**；
+- 重复提交同一完成请求幂等，不会重复累计贡献；
+- 每日任务补录历史日期只用 `doneDate`（例如补录昨天：`{"doneDate":"昨天日期"}`）。
+
+### 5. 删除任务 `DELETE /api/agent/tasks/:id`
+
+成功返回 `{ "ok": true }`。删除任务会同步撤销它带来的全部背诵贡献。
+
 ## 使用流程建议
 
 1. 先 `GET /api/agent/stats` 了解今日任务、各科背诵进度和考试倒计时；
 2. 需要新建任务时 `POST /api/agent/tasks`；
-3. 需要向用户汇报进度时，引用 `today.rate`、`week.rate`、`subjects[].rate`。
+3. 用户说"完成了/打勾"时 `POST /api/agent/tasks/:id/complete`（可带实际完成量）；
+4. 用户说"删掉这个任务"时 `DELETE /api/agent/tasks/:id`；
+5. 需要向用户汇报进度时，引用 `today.rate`、`week.rate`、`subjects[].rate`。
 
 ## 示例
 
@@ -117,6 +139,25 @@ curl -s -X POST "$BASE/api/agent/tasks" \
 curl -s -X POST "$BASE/api/agent/tasks" \
   -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"title":"背单词 50 个","subjectId":"<科目id>","amount":50,"daily":true}'
+
+# 打勾完成（今天，实际完成 30）
+curl -s -X POST "$BASE/api/agent/tasks/<任务id>/complete" \
+  -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"completed":true,"completedAmount":30}'
+
+# 补录昨天（每日任务）
+curl -s -X POST "$BASE/api/agent/tasks/<任务id>/complete" \
+  -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"doneDate":"2026-10-20"}'
+
+# 取消今天完成
+curl -s -X POST "$BASE/api/agent/tasks/<任务id>/complete" \
+  -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"completed":false}'
+
+# 删除任务
+curl -s -X DELETE "$BASE/api/agent/tasks/<任务id>" \
+  -H "X-Agent-Key: $KEY"
 ```
 
 ## 错误处理
@@ -124,8 +165,9 @@ curl -s -X POST "$BASE/api/agent/tasks" \
 | 状态码 | 含义 | 处理 |
 |---|---|---|
 | 401 | Key 缺失或无效 | 检查 `EXAM_PREP_API_KEY` 是否配置正确 |
-| 400 | 参数校验失败（如空标题、科目不存在、amount≤0、日期非法） | 修正参数后重试，错误信息在 `error` 字段 |
+| 400 | 参数校验失败（如空标题、科目不存在、amount≤0、日期非法、任务不存在） | 修正参数后重试，错误信息在 `error` 字段 |
 | 503 | 服务器未启用 Agent API（未配置 AGENT_API_KEY） | 请部署方配置 Key |
+| 404 | 任务不存在（打勾/删除时） | 确认任务 id 正确 |
 
 ## 安全
 

@@ -20,15 +20,13 @@ const isCurrentWeek = computed(() => {
 /**
  * 每日展开统计（含每日任务）：
  * - 每日任务从创建日起每天计入总量；
- * - 完成状态只有“今天”真实可知，历史天按未完成计（诚实统计，不虚报）。
+ * - 每日任务的完成状态按「任务 + 日期」独立记录（task_completions），历史天同样真实；
+ *   store.tasksOn(day) 已按该日期派生 completed，因此这里直接统计。
  */
 const daily = computed(() => {
   return week.value.days.map((day) => {
     const tasks = store.tasksOn(day)
-    const done = tasks.filter((t) => {
-      if (t.daily === true) return day === today && t.completed
-      return t.completed
-    }).length
+    const done = tasks.filter((t) => t.completed).length
     return { day, total: tasks.length, done }
   })
 })

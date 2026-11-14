@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import type { DB, SubjectRow, TaskRow } from '../db'
+import type { CompletionRow, DB, SubjectRow, TaskRow } from '../db'
 import { badRequest, notFound } from '../errors'
 import { optionalNumber, optionalString, requireDateKey, requireString } from '../validation'
 import { computeCompletion, computeRevoke } from '../domain'
@@ -17,17 +17,8 @@ export interface TaskPatch {
   daily?: boolean
   /** 完成时填写的实际完成量（可选，默认使用计划量） */
   completedAmount?: number | null
-}
-
-interface NextTaskState {
-  title: string
-  date: string
-  completed: 0 | 1
-  subject_id: string | null
-  amount: number | null
-  daily: 0 | 1
-  done_date: string | null
-  completed_amount: number | null
+  /** 每日任务：完成/取消的日期（YYYY-MM-DD，默认今天） */
+  doneDate?: string
 }
 
 function findTask(db: DB, id: string): TaskRow | undefined {
@@ -53,97 +44,191 @@ function parseAmount(amount: number | null, subjectId: string | null): number | 
   return amount
 }
 
-/** 任务在“今天”的有效完成态与有效贡献（每日任务以 done_date 判断） */
-function effectiveState(t: TaskRow, today: string): { done: boolean; contributed: number } {
-  if (t.daily === 1) {
-    const done = t.done_date === today
-    return { done, contributed: done ? t.contributed : 0 }
-  }
-  const done = t.completed === 1
-  return { done, contributed: done ? t.contributed : 0 }
+/** 以增量调整科目已完成量（限制在 [0, total]） */
+function shiftSubject(db: DB, subjectId: string, delta: number): void {
+  const subject = findSubject(db, subjectId)
+  if (!subject) return
+  const next = Math.min(subject.total, Math.max(0, subject.completed + delta))
+  db.prepare(`UPDATE subjects SET completed = ? WHERE id = ?`).run(next, subjectId)
 }
 
-export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHandler): void {
-  app.post('/api/tasks', { preHandler: auth }, async (req, reply) => {
-    const body = (req.body ?? {}) as Record<string, unknown>
-    const title = requireString(body.title, '任务名称')
-    const date = requireDateKey(body.date)
-    const subjectId = optionalString(body.subjectId)
-    if (subjectId) ensureSubjectExists(db, subjectId)
-    const amount = parseAmount(optionalNumber(body.amount, '背诵量'), subjectId)
-    const daily = body.daily === true ? 1 : 0
+function findCompletion(db: DB, taskId: string, date: string): CompletionRow | undefined {
+  return db
+    .prepare(`SELECT * FROM task_completions WHERE task_id = ? AND date = ?`)
+    .get(taskId, date) as CompletionRow | undefined
+}
 
-    const id = randomUUID()
+function listCompletions(db: DB, taskId: string): CompletionRow[] {
+  return db
+    .prepare(`SELECT * FROM task_completions WHERE task_id = ? ORDER BY date`)
+    .all(taskId) as CompletionRow[]
+}
+
+/**
+ * 每日任务完成某一天（幂等）：
+ * - 无记录：按实际完成量计算贡献并写入；
+ * - 已有记录且未指定新完成量：幂等，不重复累计；
+ * - 已有记录且指定了新完成量：先撤销旧贡献再按新值重算。
+ * 返回受影响的科目 id（无科目时 null）。
+ */
+function completeDailyOn(db: DB, task: TaskRow, targetDate: string, patch: TaskPatch): string | null {
+  const existing = findCompletion(db, task.id, targetDate)
+  const wantAmount =
+    patch.completedAmount !== undefined
+      ? patch.completedAmount
+      : (existing?.completed_amount ?? task.amount ?? null)
+
+  if (existing) {
+    if (patch.completedAmount === undefined || existing.completed_amount === patch.completedAmount) {
+      return existing.subject_id
+    }
+    if (existing.contributed > 0 && existing.subject_id) {
+      shiftSubject(db, existing.subject_id, -existing.contributed)
+    }
+    let contributed = 0
+    if (wantAmount !== null && wantAmount > 0 && existing.subject_id) {
+      const subject = findSubject(db, existing.subject_id)
+      if (subject) {
+        const res = computeCompletion(subject, wantAmount)
+        contributed = res.contributed
+        db.prepare(`UPDATE subjects SET completed = ? WHERE id = ?`).run(res.completed, subject.id)
+      }
+    }
     db.prepare(
-      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, daily, done_date)
-       VALUES (?, ?, ?, 0, ?, ?, 0, ?, NULL)`,
-    ).run(id, title, date, subjectId, amount, daily)
-    const row = findTask(db, id)!
-    return reply.status(201).send({ task: toTaskDto(row) })
-  })
+      `UPDATE task_completions SET completed_amount = ?, contributed = ? WHERE task_id = ? AND date = ?`,
+    ).run(wantAmount, contributed, task.id, targetDate)
+    return existing.subject_id
+  }
 
-  /**
-   * 更新任务（含背诵联动，全部在事务中）：
-   * 1) 撤销旧有效贡献（每日任务只撤销“今天”的贡献）
-   * 2) 应用新字段（含 daily 转换、done_date 维护）
-   * 3) 按新状态重新计算贡献
-   */
+  let contributed = 0
+  if (wantAmount !== null && wantAmount > 0 && task.subject_id) {
+    const subject = findSubject(db, task.subject_id)
+    if (subject) {
+      const res = computeCompletion(subject, wantAmount)
+      contributed = res.contributed
+      db.prepare(`UPDATE subjects SET completed = ? WHERE id = ?`).run(res.completed, subject.id)
+    }
+  }
+  db.prepare(
+    `INSERT INTO task_completions (task_id, date, completed_amount, contributed, subject_id)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(task.id, targetDate, wantAmount, contributed, task.subject_id)
+  return task.subject_id
+}
+
+/** 取消每日任务某一天的完成（幂等）：撤销该天贡献并删除记录 */
+function uncompleteDailyOn(db: DB, task: TaskRow, targetDate: string): string | null {
+  const existing = findCompletion(db, task.id, targetDate)
+  if (!existing) return null
+  if (existing.contributed > 0 && existing.subject_id) {
+    shiftSubject(db, existing.subject_id, -existing.contributed)
+  }
+  db.prepare(`DELETE FROM task_completions WHERE task_id = ? AND date = ?`).run(task.id, targetDate)
+  return existing.subject_id
+}
+
+/**
+ * 任务核心操作（供 Web API 与 Agent API 共用）：
+ * - patchTask：更新/勾选（每日任务按 (task_id, date) 记录完成，普通任务保持原逻辑）；
+ * - deleteTask：删除任务并撤销其全部贡献。
+ */
+export function createTaskOperations(db: DB) {
   const patchTask = db.transaction((id: string, patch: TaskPatch) => {
     const old = findTask(db, id)
     if (!old) throw notFound('任务不存在')
     const today = todayKeyLocal()
 
-    // 1) 撤销旧有效贡献
-    const oldState = effectiveState(old, today)
-    if (oldState.done && old.subject_id) {
+    // ================= 每日任务 =================
+    if (old.daily === 1) {
+      const targetDate = patch.doneDate ?? today
+      let affectedSubjectId: string | null = null
+
+      const nextTitle = patch.title !== undefined ? patch.title : old.title
+      const nextDate = patch.date !== undefined ? patch.date : old.date
+      const nextAmount = patch.amount !== undefined ? patch.amount : old.amount
+      const nextSubjectId = patch.subjectId !== undefined ? patch.subjectId : old.subject_id
+      if (nextSubjectId && nextSubjectId !== old.subject_id) ensureSubjectExists(db, nextSubjectId)
+
+      if (patch.completed === true) {
+        affectedSubjectId = completeDailyOn(db, old, targetDate, patch)
+      } else if (patch.completed === false) {
+        affectedSubjectId = uncompleteDailyOn(db, old, targetDate)
+      }
+
+      // 每日 -> 普通：保留“今天是否完成”为普通任务完成态
+      if (patch.daily === false) {
+        const compsBefore = listCompletions(db, old.id)
+        const todayComp = compsBefore.find((c) => c.date === today)
+        db.prepare(
+          `UPDATE tasks SET title=?, amount=?, subject_id=?, daily=0, completed=?, done_date=NULL, contributed=?, completed_amount=? WHERE id=?`,
+        ).run(
+          nextTitle,
+          nextAmount,
+          nextSubjectId,
+          todayComp ? 1 : 0,
+          todayComp?.contributed ?? 0,
+          todayComp?.completed_amount ?? null,
+          id,
+        )
+        const updated = findTask(db, id)!
+        const affected = todayComp?.subject_id ? findSubject(db, todayComp.subject_id) : undefined
+        return { task: toTaskDto(updated, []), subject: affected ? toSubjectDto(affected) : null }
+      }
+
+      // 更新任务字段 + 兼容字段（done_date 最近完成日期；contributed/completed 取今天视角）
+      const comps = listCompletions(db, old.id)
+      const last = comps.length > 0 ? comps[comps.length - 1] : null
+      const todayComp = comps.find((c) => c.date === today)
+      db.prepare(
+        `UPDATE tasks SET title=?, date=?, amount=?, subject_id=?, daily=1, done_date=?, contributed=?, completed_amount=?, completed=? WHERE id=?`,
+      ).run(
+        nextTitle,
+        nextDate,
+        nextAmount,
+        nextSubjectId,
+        last?.date ?? null,
+        todayComp?.contributed ?? 0,
+        todayComp?.completed_amount ?? null,
+        todayComp ? 1 : 0,
+        id,
+      )
+
+      const updated = findTask(db, id)!
+      const affected = affectedSubjectId ? findSubject(db, affectedSubjectId) : undefined
+      return { task: toTaskDto(updated, comps), subject: affected ? toSubjectDto(affected) : null }
+    }
+
+    // ================= 普通任务 =================
+    // 普通 -> 每日：撤销普通完成贡献并重置为“今天未完成”
+    if (patch.daily === true) {
+      if (old.completed === 1 && old.subject_id) {
+        const subject = findSubject(db, old.subject_id)
+        if (subject) {
+          const { completed } = computeRevoke(subject, old.contributed)
+          db.prepare(`UPDATE subjects SET completed = ? WHERE id = ?`).run(completed, subject.id)
+        }
+      }
+      const nextTitle = patch.title !== undefined ? patch.title : old.title
+      const nextAmount = patch.amount !== undefined ? patch.amount : old.amount
+      const nextSubjectId = patch.subjectId !== undefined ? patch.subjectId : old.subject_id
+      if (nextSubjectId && nextSubjectId !== old.subject_id) ensureSubjectExists(db, nextSubjectId)
+      db.prepare(
+        `UPDATE tasks SET title=?, amount=?, subject_id=?, daily=1, completed=0, done_date=NULL, contributed=0, completed_amount=NULL WHERE id=?`,
+      ).run(nextTitle, nextAmount, nextSubjectId, id)
+      const updated = findTask(db, id)!
+      const affected = nextSubjectId ? findSubject(db, nextSubjectId) : undefined
+      return { task: toTaskDto(updated, []), subject: affected ? toSubjectDto(affected) : null }
+    }
+
+    // 普通任务：撤销旧贡献 -> 应用新字段 -> 应用新贡献
+    if (old.completed === 1 && old.subject_id) {
       const oldSubject = findSubject(db, old.subject_id)
       if (oldSubject) {
-        const { completed } = computeRevoke(oldSubject, oldState.contributed)
+        const { completed } = computeRevoke(oldSubject, old.contributed)
         db.prepare(`UPDATE subjects SET completed = ? WHERE id = ?`).run(completed, oldSubject.id)
       }
     }
 
-    // 2) 计算新状态
-    let nextDaily = old.daily as 0 | 1
-    let nextDoneDate = old.done_date
-    let nextCompleted = old.completed as 0 | 1
-
-    if (patch.daily !== undefined) {
-      if (patch.daily && old.daily === 0) {
-        // 普通 -> 每日：重置为“今天未完成”
-        nextDaily = 1
-        nextDoneDate = null
-        nextCompleted = 0
-      } else if (!patch.daily && old.daily === 1) {
-        // 每日 -> 普通：保留“今天是否完成”
-        nextDaily = 0
-        nextCompleted = old.done_date === today ? 1 : 0
-        nextDoneDate = null
-      } else {
-        nextDaily = patch.daily ? 1 : 0
-      }
-    }
-
-    if (patch.completed !== undefined) {
-      if (nextDaily === 1) {
-        if (patch.completed) {
-          // 勾选每日任务：记录今天（重复勾选幂等）
-          if (nextDoneDate !== today) {
-            nextDoneDate = today
-            nextCompleted = 1
-          }
-        } else {
-          nextDoneDate = null
-          nextCompleted = 0
-        }
-      } else {
-        nextCompleted = patch.completed ? 1 : 0
-      }
-    }
-
-    // 实际完成量：完成时记录（默认沿用旧值或计划量），取消完成时清空。
-    // 规则：未主动填写实际量（completed_amount == amount）时，编辑计划量会同步；
-    //       用户填写过实际量时，编辑计划量不改变实际完成量。
     let nextCompletedAmount = old.completed_amount
     if (patch.completed !== undefined) {
       if (patch.completed) {
@@ -164,20 +249,17 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
       nextCompletedAmount = patch.amount
     }
 
-    const next: NextTaskState = {
+    const next = {
       title: patch.title !== undefined ? patch.title : old.title,
       date: patch.date !== undefined ? patch.date : old.date,
-      completed: nextCompleted,
+      completed: patch.completed !== undefined ? (patch.completed ? 1 : 0) : (old.completed as 0 | 1),
       subject_id: patch.subjectId !== undefined ? patch.subjectId : old.subject_id,
       amount: patch.amount !== undefined ? patch.amount : old.amount,
-      daily: nextDaily,
-      done_date: nextDoneDate,
       completed_amount: nextCompletedAmount,
     }
     if (next.subject_id && next.subject_id !== old.subject_id) ensureSubjectExists(db, next.subject_id)
 
-    // 3) 应用新贡献（按实际完成量计算：completed_amount 优先，未填写则用计划量）
-    const newDone = next.daily === 1 ? next.done_date === today : next.completed === 1
+    const newDone = next.completed === 1
     const effectiveAmount = newDone ? (next.completed_amount ?? next.amount) : null
     let contributed = 0
     if (newDone && next.subject_id && effectiveAmount && effectiveAmount > 0) {
@@ -190,7 +272,7 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
     }
 
     db.prepare(
-      `UPDATE tasks SET title=?, date=?, completed=?, subject_id=?, amount=?, contributed=?, daily=?, done_date=?, completed_amount=? WHERE id=?`,
+      `UPDATE tasks SET title=?, date=?, completed=?, subject_id=?, amount=?, contributed=?, daily=0, done_date=NULL, completed_amount=? WHERE id=?`,
     ).run(
       next.title,
       next.date,
@@ -198,15 +280,57 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
       next.subject_id,
       next.amount,
       contributed,
-      next.daily,
-      next.done_date,
       next.completed_amount,
       id,
     )
 
     const updated = findTask(db, id)!
     const affected = next.subject_id ? findSubject(db, next.subject_id) : undefined
-    return { task: toTaskDto(updated), subject: affected ? toSubjectDto(affected) : null }
+    return { task: toTaskDto(updated, []), subject: affected ? toSubjectDto(affected) : null }
+  })
+
+  const deleteTask = db.transaction((id: string) => {
+    const old = findTask(db, id)
+    if (!old) throw notFound('任务不存在')
+
+    if (old.daily === 1) {
+      // 每日任务：撤销所有历史完成记录的贡献，再删除任务（completions 级联删除）
+      const comps = listCompletions(db, old.id)
+      for (const c of comps) {
+        if (c.contributed > 0 && c.subject_id) shiftSubject(db, c.subject_id, -c.contributed)
+      }
+    } else if (old.completed === 1 && old.subject_id) {
+      const subject = findSubject(db, old.subject_id)
+      if (subject) {
+        const { completed } = computeRevoke(subject, old.contributed)
+        db.prepare(`UPDATE subjects SET completed = ? WHERE id = ?`).run(completed, subject.id)
+      }
+    }
+    db.prepare(`DELETE FROM tasks WHERE id = ?`).run(id)
+  })
+
+  return { patchTask, deleteTask }
+}
+
+export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHandler): void {
+  const { patchTask, deleteTask } = createTaskOperations(db)
+
+  app.post('/api/tasks', { preHandler: auth }, async (req, reply) => {
+    const body = (req.body ?? {}) as Record<string, unknown>
+    const title = requireString(body.title, '任务名称')
+    const date = requireDateKey(body.date)
+    const subjectId = optionalString(body.subjectId)
+    if (subjectId) ensureSubjectExists(db, subjectId)
+    const amount = parseAmount(optionalNumber(body.amount, '背诵量'), subjectId)
+    const daily = body.daily === true ? 1 : 0
+
+    const id = randomUUID()
+    db.prepare(
+      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, daily, done_date)
+       VALUES (?, ?, ?, 0, ?, ?, 0, ?, NULL)`,
+    ).run(id, title, date, subjectId, amount, daily)
+    const row = findTask(db, id)!
+    return reply.status(201).send({ task: toTaskDto(row) })
   })
 
   app.patch('/api/tasks/:id', { preHandler: auth }, async (req) => {
@@ -232,8 +356,10 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
         throw badRequest('实际完成量必须是不小于 0 的数字')
       }
     }
+    if (body.doneDate !== undefined) {
+      patch.doneDate = requireDateKey(body.doneDate, '完成日期')
+    }
 
-    // 背诵量校验需要考虑“本请求是否会改变科目”
     if (patch.amount !== undefined || patch.subjectId !== undefined) {
       const old = findTask(db, id)
       const effectiveSubjectId =
@@ -243,20 +369,6 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
     }
 
     return patchTask(id, patch)
-  })
-
-  const deleteTask = db.transaction((id: string) => {
-    const old = findTask(db, id)
-    if (!old) throw notFound('任务不存在')
-    const oldState = effectiveState(old, todayKeyLocal())
-    if (oldState.done && old.subject_id) {
-      const subject = findSubject(db, old.subject_id)
-      if (subject) {
-        const { completed } = computeRevoke(subject, oldState.contributed)
-        db.prepare(`UPDATE subjects SET completed = ? WHERE id = ?`).run(completed, subject.id)
-      }
-    }
-    db.prepare(`DELETE FROM tasks WHERE id = ?`).run(id)
   })
 
   app.delete('/api/tasks/:id', { preHandler: auth }, async (req) => {

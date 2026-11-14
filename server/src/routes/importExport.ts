@@ -30,6 +30,12 @@ export interface ImportedSite {
   url: string
 }
 
+export interface ImportedCompletion {
+  date: string
+  completedAmount: number | null
+  contributed: number
+}
+
 export interface ImportedTask {
   id: string
   title: string
@@ -42,6 +48,8 @@ export interface ImportedTask {
   doneDate: string | null
   /** 完成时填写的实际完成量（未填写时为 null） */
   completedAmount: number | null
+  /** 每日任务的历史完成记录 */
+  completions: ImportedCompletion[]
 }
 
 export interface ImportedData {
@@ -131,6 +139,29 @@ export function normalizeImport(raw: unknown): NormalizeResult {
         : null
     // 贡献按实际完成量（导入数据为自洽快照，任务完成时按 completedAmount 或计划量计）
     const effectiveAmount = completedAmount ?? amount
+
+    // 每日任务历史完成记录（新格式）；旧备份无 completions 时按 doneDate 生成一条兼容记录
+    const completions: ImportedCompletion[] = []
+    if (Array.isArray(item.completions)) {
+      for (const c of item.completions) {
+        if (!isRecord(c)) continue
+        if (typeof c.date !== 'string' || !DATE_RE.test(c.date)) continue
+        const compAmount =
+          typeof c.completedAmount === 'number' &&
+          Number.isFinite(c.completedAmount) &&
+          c.completedAmount >= 0
+            ? c.completedAmount
+            : null
+        const compContributed =
+          typeof c.contributed === 'number' && Number.isFinite(c.contributed) && c.contributed > 0
+            ? c.contributed
+            : 0
+        completions.push({ date: c.date, completedAmount: compAmount, contributed: compContributed })
+      }
+    } else if (daily && completed && doneDate) {
+      completions.push({ date: doneDate, completedAmount, contributed: effectiveAmount ?? 0 })
+    }
+
     tasks.push({
       id: typeof item.id === 'string' && item.id !== '' ? item.id : `task_imported_${tasks.length + 1}`,
       title: typeof item.title === 'string' && item.title.trim() !== '' ? item.title.trim() : '未命名任务',
@@ -142,6 +173,7 @@ export function normalizeImport(raw: unknown): NormalizeResult {
       daily,
       doneDate,
       completedAmount,
+      completions,
     })
   }
 
@@ -219,6 +251,18 @@ export function registerImportExportRoutes(app: FastifyInstance, db: DB, auth: A
         t.doneDate,
         t.completedAmount,
       )
+    }
+
+    // 每日任务历史完成记录（导入为替换快照，不重复累加）
+    const insCompletion = db.prepare(
+      `INSERT OR IGNORE INTO task_completions (task_id, date, completed_amount, contributed, subject_id)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    for (const t of data.tasks) {
+      if (!t.daily) continue
+      for (const c of t.completions) {
+        insCompletion.run(t.id, c.date, c.completedAmount, c.contributed, t.subjectId)
+      }
     }
     return backupId
   })

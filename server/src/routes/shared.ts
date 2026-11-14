@@ -1,4 +1,4 @@
-import type { SiteRow, SubjectRow, TaskRow } from '../db'
+import type { CompletionRow, SiteRow, SubjectRow, TaskRow } from '../db'
 
 /** 本地时区今天（YYYY-MM-DD），与前端日期工具保持一致 */
 export function todayKeyLocal(): string {
@@ -7,23 +7,46 @@ export function todayKeyLocal(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-export function toTaskDto(row: TaskRow) {
-  // 每日任务：以 done_date 是否为今天决定“今天是否完成”；贡献量同样按天归零
-  const isDailyDoneToday = row.daily === 1 && row.done_date === todayKeyLocal()
-  const completedToday = row.daily === 1 ? isDailyDoneToday : row.completed === 1
+export function toTaskDto(row: TaskRow, completions: CompletionRow[] = []) {
+  if (row.daily === 1) {
+    const today = todayKeyLocal()
+    const sorted = [...completions].sort((a, b) => a.date.localeCompare(b.date))
+    const todayComp = sorted.find((c) => c.date === today)
+    const last = sorted.length > 0 ? sorted[sorted.length - 1] : null
+    return {
+      id: row.id,
+      title: row.title,
+      date: row.date,
+      // 兼容语义：completed 表示“今天是否完成”（新前端使用 completions 判断任意日期）
+      completed: todayComp !== undefined,
+      subjectId: row.subject_id,
+      amount: row.amount,
+      // 兼容语义：今天贡献量（历史日期见 completions）
+      contributed: todayComp?.contributed ?? 0,
+      completedAmount: todayComp?.completed_amount ?? null,
+      daily: true,
+      doneDate: last?.date ?? null,
+      completions: sorted.map((c) => ({
+        date: c.date,
+        completedAmount: c.completed_amount,
+        contributed: c.contributed,
+      })),
+    }
+  }
+
+  const completed = row.completed === 1
   return {
     id: row.id,
     title: row.title,
     date: row.date,
-    completed: completedToday,
+    completed,
     subjectId: row.subject_id,
     amount: row.amount,
-    /** 该任务今天对科目的实际贡献量（每日任务昨天完成、今天未勾选时为 0） */
-    contributed: row.daily === 1 ? (isDailyDoneToday ? row.contributed : 0) : row.contributed,
-    /** 完成时填写的实际完成量（未完成时 null） */
-    completedAmount: completedToday ? row.completed_amount : null,
-    daily: row.daily === 1,
-    doneDate: row.done_date,
+    contributed: row.contributed,
+    completedAmount: completed ? row.completed_amount : null,
+    daily: false,
+    doneDate: null,
+    completions: [] as Array<{ date: string; completedAmount: number | null; contributed: number }>,
   }
 }
 

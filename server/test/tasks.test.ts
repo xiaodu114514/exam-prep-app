@@ -288,19 +288,33 @@ describe('每日任务（daily）', () => {
     expect(subjectCompleted(db, subjectId)).toBe(0)
   })
 
-  it('昨天完成的每日任务：今天序列化为未完成、贡献归零', async () => {
-    const { app, db } = setupSubject()
-    db.prepare(
-      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, daily, done_date)
-       VALUES ('dt1', '每日背单词', ?, 1, 'subj-test', 30, 30, 1, ?)`,
-    ).run(daysAgo(1), daysAgo(1))
+  it('昨天完成的每日任务：今天 completed=false（兼容视角），但 completions 保留昨天记录', async () => {
+    const { app, subjectId } = setupSubject()
     const { cookie } = await login(app)
+    const created = await authedRequest(app, cookie, 'POST', '/api/tasks', {
+      title: '每日背单词',
+      date: daysAgo(3),
+      subjectId,
+      amount: 30,
+      daily: true,
+    })
+    const taskId = created.json().task.id as string
+    await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      doneDate: daysAgo(1),
+    })
+
     const data = await authedRequest(app, cookie, 'GET', '/api/data')
-    const task = data.json().tasks.find((t: { id: string }) => t.id === 'dt1')
+    const task = data.json().tasks.find((t: { id: string }) => t.id === taskId)
     expect(task.daily).toBe(true)
+    // 兼容视角：今天未完成
     expect(task.completed).toBe(false)
     expect(task.contributed).toBe(0)
+    // 历史完成记录保留（这是本次修复的核心）
     expect(task.doneDate).toBe(daysAgo(1))
+    expect(task.completions).toEqual([
+      { date: daysAgo(1), completedAmount: 30, contributed: 30 },
+    ])
   })
 
   it('普通任务转每日任务：重置为今天未完成并撤销贡献', async () => {

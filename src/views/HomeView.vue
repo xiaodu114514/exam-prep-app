@@ -67,21 +67,21 @@ const completingSubject = computed(() => store.getSubject(completing.value?.subj
 
 async function onToggleTask(task: Task) {
   if (task.completed) {
-    await store.toggleTask(task.id)
+    await store.toggleTask(task.id, today)
     return
   }
   if (task.amount != null && task.amount > 0) {
     completing.value = task
     return
   }
-  await store.toggleTask(task.id)
+  await store.toggleTask(task.id, today)
 }
 
 async function confirmComplete(amount: number) {
   if (!completing.value) return
   const id = completing.value.id
   completing.value = null
-  await store.toggleTask(id, amount)
+  await store.toggleTask(id, today, amount)
 }
 
 function subjectOf(task: Task) {

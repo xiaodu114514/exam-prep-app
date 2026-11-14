@@ -83,19 +83,38 @@ describe('周汇总：统计规则', () => {
     expect(statValues(wrapper)).toEqual(['1', '1', '0', '100%'])
   })
 
-  it('每日任务从创建日起每天计入总量，历史天按未完成计', () => {
+  it('每日任务从创建日起每天计入总量，完成状态按天记录', () => {
     const week = getWeekRange(todayKey())
-    // 每日任务创建于本周一、今天已完成：本周 7 天每天出现（总量 7），仅今天算完成（1）
+    // 每日任务创建于本周一、今天有完成记录：本周 7 天每天出现（总量 7），按记录完成 1
     seedTasks([
       {
         id: 'd1',
         title: '每日背单词',
         date: week.start,
-        completed: true,
+        completed: false,
         subjectId: null,
         amount: null,
         daily: true,
-        doneDate: todayKey(),
+        completions: [{ date: todayKey(), completedAmount: null, contributed: 0 }],
+      },
+    ])
+    const wrapper = mount(WeeklyView)
+    expect(statValues(wrapper)).toEqual(['7', '1', '6', '14%'])
+  })
+
+  it('每日任务历史完成记录在刷新后仍计入周汇总', () => {
+    const week = getWeekRange(todayKey())
+    // 本周一完成过（有 completion 记录），今天未完成：周一仍计为完成
+    seedTasks([
+      {
+        id: 'd1',
+        title: '每日背单词',
+        date: week.start,
+        completed: false,
+        subjectId: null,
+        amount: null,
+        daily: true,
+        completions: [{ date: week.start, completedAmount: 30, contributed: 30 }],
       },
     ])
     const wrapper = mount(WeeklyView)

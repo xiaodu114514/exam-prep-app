@@ -2,6 +2,28 @@
 
 > 项目暂未接入 Git（本机无 git），先以本文件记录每次发布，作为可追溯版本记录。
 
+## v1.7.0（2026-11-14 15:20）— 每日任务按日期独立记录 + Agent 打勾/删除接口
+
+**发布内容**：
+1. **周汇总 Bug 修复**：每日任务完成状态改为按「任务 ID + 日期」独立存储（新表 `task_completions`），历史完成记录永久保留、补录不串日、取消不串日、背诵贡献精确可撤销；
+2. **Agent 开放接口新增**：`POST /api/agent/tasks/:id/complete`（打勾/取消，支持 doneDate 补录与 completedAmount）、`DELETE /api/agent/tasks/:id`（删除任务并撤销贡献）；
+3. 同步更新 `skills/exam-prep-agent/SKILL.md`。
+
+**数据库迁移**：schema v4 → v5（建 `task_completions` 表 + 迁移 `done_date` 历史记录）。生产库 45 条任务完整保留，迁移 6 条历史完成记录（与迁移源数量一致）。
+
+**备份位置（/srv/exam-prep/backups/）**：
+- 数据库：`app-20261114-151936.db`（迁移前，完整性校验 ok，user_version=4）
+- 旧后端源码：`server-src-20261114-151936.tar.gz`
+- 旧前端：`frontend-20261114-151936.tar.gz`
+
+**验收结果**：user_version=5、task_completions 就绪、health 200、首页/SPA 200（新 JS hash）、Agent 新接口线上实测（创建→打勾→取消→删除→清理）全部通过。
+
+**回滚方式**：后端恢复 `server-src-20261114-151936.tar.gz` + 重启；数据库恢复 `app-20261114-151936.db`（v4 快照）；前端恢复 `frontend-20261114-151936.tar.gz`。
+
+**未验证**：浏览器端真人点击验证（本地单测 283 个通过）。
+
+---
+
 ## v1.6.0（2026-10-30 22:30）— 完成任务时填写实际完成量
 
 **发布内容**：

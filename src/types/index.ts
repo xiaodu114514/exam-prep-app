@@ -26,6 +26,13 @@ export interface StudySite {
   url: string
 }
 
+/** 每日任务某一天的完成记录（任务 ID + 日期唯一） */
+export interface TaskCompletion {
+  date: string
+  completedAmount: number | null
+  contributed: number
+}
+
 /** 学习任务 */
 export interface Task {
   id: string
@@ -44,6 +51,8 @@ export interface Task {
   contributed?: number
   /** 完成任务时填写的实际完成量（未完成或未填写时为 null） */
   completedAmount?: number | null
+  /** 每日任务的历史完成记录（按日期独立；普通任务为空数组） */
+  completions?: TaskCompletion[]
   /** 每日任务：从创建日起每天自动出现在任务列表，完成状态按天独立 */
   daily?: boolean
   /** 每日任务最近完成日期（YYYY-MM-DD） */

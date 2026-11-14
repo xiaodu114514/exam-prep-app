@@ -82,7 +82,7 @@ async function onToggle(id: string) {
   if (!task) return
   if (task.completed) {
     // 取消完成：直接撤销，无需弹窗
-    await doToggle(id)
+    await doToggle(id, false)
     return
   }
   if (task.amount != null && task.amount > 0) {
@@ -90,21 +90,28 @@ async function onToggle(id: string) {
     completing.value = task
     return
   }
-  await doToggle(id)
+  await doToggle(id, true)
 }
 
-async function doToggle(id: string, actualAmount?: number) {
-  const result = await store.toggleTask(id, actualAmount)
+/**
+ * @param completed true=完成该天，false=取消该天
+ * @param actualAmount 完成时填写的实际完成量（用于提示文案）
+ */
+async function doToggle(id: string, completed: boolean, actualAmount?: number) {
+  // 每日任务按当前选择的日期提交（补录历史日期只影响那一天）
+  const result = await store.toggleTask(id, selectedDate.value, actualAmount)
   if (!result) return
-  const { task, subject } = result
-  const amount = task.completedAmount ?? task.amount ?? 0
-  if (subject && amount > 0) {
-    if (task.completed) {
-      const contributed = task.contributed ?? amount
-      toast.success(`已计入「${subject.name}」+${contributed} ${subject.unit}`)
+  const { subject } = result
+  if (!subject) return
+  if (completed) {
+    const amount = actualAmount ?? result.task.completedAmount ?? result.task.amount ?? 0
+    if (amount > 0) {
+      toast.success(`已计入「${subject.name}」+${amount} ${subject.unit}`)
     } else {
-      toast.info(`已撤销「${subject.name}」的背诵贡献`)
+      toast.success('已完成')
     }
+  } else {
+    toast.info(`已撤销「${subject.name}」的背诵贡献`)
   }
 }
 
@@ -112,7 +119,7 @@ async function confirmComplete(amount: number) {
   if (!completing.value) return
   const id = completing.value.id
   completing.value = null
-  await doToggle(id, amount)
+  await doToggle(id, true, amount)
 }
 
 // ---------- 表单 ----------

@@ -157,3 +157,133 @@ describe('Agent 开放接口：完成度统计', () => {
     expect(res.json().tasks[0].completed).toBe(true)
   })
 })
+
+describe('Agent 开放接口：打勾与删除', () => {
+  function daysAgo(n: number): string {
+    const d = new Date()
+    d.setDate(d.getDate() - n)
+    const p = (x: number) => (x < 10 ? `0${x}` : String(x))
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
+
+  function subjectCompleted(db: ReturnType<typeof createTestApp>['db'], id = 's1'): number {
+    return (db.prepare(`SELECT completed FROM subjects WHERE id = ?`).get(id) as { completed: number })
+      .completed
+  }
+
+  async function setup() {
+    const { app, db } = agentApp()
+    db.prepare(
+      `INSERT INTO subjects (id, name, unit, total, completed) VALUES ('s1','英语','单词',1000,0)`,
+    ).run()
+    return { app, db }
+  }
+
+  async function createTask(
+    app: Awaited<ReturnType<typeof setup>>['app'],
+    kind: 'daily' | 'normal',
+    opts: { amount?: number } = {},
+  ) {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agent/tasks',
+      headers: { 'x-agent-key': KEY },
+      payload: {
+        title: '任务',
+        date: daysAgo(3),
+        subjectId: 's1',
+        amount: opts.amount ?? 10,
+        daily: kind === 'daily',
+      },
+    })
+    return res.json().task.id as string
+  }
+
+  function complete(
+    app: Awaited<ReturnType<typeof setup>>['app'],
+    id: string,
+    payload: Record<string, unknown>,
+  ) {
+    return app.inject({
+      method: 'POST',
+      url: `/api/agent/tasks/${id}/complete`,
+      headers: { 'x-agent-key': KEY },
+      payload,
+    })
+  }
+
+  it('打勾普通任务：记录实际完成量并累计贡献', async () => {
+    const { app, db } = await setup()
+    const id = await createTask(app, 'normal')
+
+    const res = await complete(app, id, { completed: true, completedAmount: 8 })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().task.completed).toBe(true)
+    expect(res.json().task.contributed).toBe(8)
+    expect(subjectCompleted(db)).toBe(8)
+  })
+
+  it('打勾每日任务：按指定日期记录，取消只影响该天', async () => {
+    const { app, db } = await setup()
+    const id = await createTask(app, 'daily')
+
+    // 补录昨天
+    const r1 = await complete(app, id, { doneDate: daysAgo(1), completedAmount: 6 })
+    expect(r1.json().task.completions.map((c: { date: string }) => c.date)).toEqual([daysAgo(1)])
+    // 今天
+    const r2 = await complete(app, id, { doneDate: todayKey() })
+    expect(r2.json().task.completions).toHaveLength(2)
+    expect(subjectCompleted(db)).toBe(16)
+    // 取消昨天
+    const r3 = await complete(app, id, { completed: false, doneDate: daysAgo(1) })
+    expect(r3.json().task.completions.map((c: { date: string }) => c.date)).toEqual([todayKey()])
+    expect(subjectCompleted(db)).toBe(10)
+  })
+
+  it('重复打勾幂等：不重复累计', async () => {
+    const { app, db } = await setup()
+    const id = await createTask(app, 'daily')
+
+    await complete(app, id, {})
+    await complete(app, id, {})
+    await complete(app, id, {})
+    expect(subjectCompleted(db)).toBe(10)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/agent/tasks',
+      headers: { 'x-agent-key': KEY },
+    })
+    const task = res.json().tasks.find((t: { id: string }) => t.id === id)
+    expect(task.completed).toBe(true)
+  })
+
+  it('删除任务：撤销贡献并从列表中移除', async () => {
+    const { app, db } = await setup()
+    const id = await createTask(app, 'normal')
+    await complete(app, id, { completed: true, completedAmount: 12 })
+    expect(subjectCompleted(db)).toBe(12)
+
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/api/agent/tasks/${id}`,
+      headers: { 'x-agent-key': KEY },
+    })
+    expect(del.statusCode).toBe(200)
+    expect(subjectCompleted(db)).toBe(0)
+
+    const list = await app.inject({
+      method: 'GET',
+      url: '/api/agent/tasks',
+      headers: { 'x-agent-key': KEY },
+    })
+    expect(list.json().tasks.find((t: { id: string }) => t.id === id)).toBeUndefined()
+  })
+
+  it('新接口同样需要认证：未带 Key 返回 401', async () => {
+    const { app } = agentApp()
+    const done = await app.inject({ method: 'POST', url: '/api/agent/tasks/x/complete' })
+    expect(done.statusCode).toBe(401)
+    const del = await app.inject({ method: 'DELETE', url: '/api/agent/tasks/x' })
+    expect(del.statusCode).toBe(401)
+  })
+})

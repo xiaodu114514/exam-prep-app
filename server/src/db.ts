@@ -59,6 +59,15 @@ export interface TaskRow {
   completed_amount: number | null
 }
 
+/** 每日任务某一天的完成记录 */
+export interface CompletionRow {
+  task_id: string
+  date: string
+  completed_amount: number | null
+  contributed: number
+  subject_id: string | null
+}
+
 const SCHEMA_V1_SQL = `
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
@@ -118,7 +127,7 @@ CREATE TABLE IF NOT EXISTS data_backups (
 `
 
 /** 当前程序支持的 schema 版本（与 PRAGMA user_version 对应） */
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 /**
  * 迁移步骤列表：索引 = 当前 user_version，执行后写入 user_version = 索引 + 1。
@@ -152,6 +161,42 @@ const MIGRATIONS: Array<(db: DB) => void> = [
   // v4：完成任务时记录实际完成量（未填写时用计划量 amount）
   (db) => {
     db.exec(`ALTER TABLE tasks ADD COLUMN completed_amount REAL;`)
+  },
+  // v5：每日任务按「任务 ID + 日期」独立记录完成状态与贡献
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_completions (
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        date TEXT NOT NULL,
+        completed_amount REAL,
+        contributed REAL NOT NULL DEFAULT 0,
+        -- 贡献归属的科目（任务改科目后历史贡献仍归属原科目）
+        subject_id TEXT REFERENCES subjects(id) ON DELETE SET NULL,
+        PRIMARY KEY (task_id, date)
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_completions_date ON task_completions(date);
+    `)
+    // 迁移旧数据：每日任务 done_date 对应的完成记录 -> task_completions
+    // 只迁移有明确证据（done_date 存在）的日期，不凭空生成历史记录
+    const rows = db
+      .prepare(
+        `SELECT id, done_date, completed_amount, contributed, subject_id
+         FROM tasks WHERE daily = 1 AND done_date IS NOT NULL`,
+      )
+      .all() as Array<{
+      id: string
+      done_date: string
+      completed_amount: number | null
+      contributed: number
+      subject_id: string | null
+    }>
+    const insert = db.prepare(
+      `INSERT OR IGNORE INTO task_completions (task_id, date, completed_amount, contributed, subject_id)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    for (const row of rows) {
+      insert.run(row.id, row.done_date, row.completed_amount, row.contributed, row.subject_id)
+    }
   },
 ]
 

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import type { DB, ExamRow, SiteRow, SubjectRow, TaskRow } from '../db'
+import type { CompletionRow, DB, ExamRow, SiteRow, SubjectRow, TaskRow } from '../db'
 import { toSiteDto, toSubjectDto, toTaskDto } from './shared'
 import { readTexts } from './texts'
 import type { AuthPreHandler } from './tasks'
@@ -12,13 +12,23 @@ export function readAllData(db: DB) {
     .all() as SubjectRow[]
   const sites = db.prepare(`SELECT id, name, url FROM sites ORDER BY rowid`).all() as SiteRow[]
   const tasks = db.prepare(`SELECT * FROM tasks ORDER BY rowid`).all() as TaskRow[]
+  const completions = db
+    .prepare(`SELECT * FROM task_completions ORDER BY date`)
+    .all() as CompletionRow[]
+
+  const byTask = new Map<string, CompletionRow[]>()
+  for (const c of completions) {
+    const arr = byTask.get(c.task_id) ?? []
+    arr.push(c)
+    byTask.set(c.task_id, arr)
+  }
 
   return {
     version: 1,
     exam: { name: exam.name, date: exam.date },
     subjects: subjects.map(toSubjectDto),
     sites: sites.map(toSiteDto),
-    tasks: tasks.map(toTaskDto),
+    tasks: tasks.map((t) => toTaskDto(t, byTask.get(t.id) ?? [])),
     texts: readTexts(db),
   }
 }

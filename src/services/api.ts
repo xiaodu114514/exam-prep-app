@@ -89,6 +89,8 @@ export interface TaskPatchInput {
   daily?: boolean
   /** 完成时填写的实际完成量（勾选完成时可选） */
   completedAmount?: number | null
+  /** 每日任务：完成/取消的日期（YYYY-MM-DD，默认今天） */
+  doneDate?: string
 }
 
 export const createTask = (input: {

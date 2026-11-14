@@ -171,7 +171,7 @@ describe('业务 action：成功 / 失败 / 回滚', () => {
     const serverSubject = { id: 's1', name: '英语', unit: '单词', total: 100, completed: 40 }
     vi.mocked(api.patchTask).mockResolvedValue({ task: serverTask, subject: serverSubject })
 
-    const result = await store.toggleTask(task.id, 30)
+    const result = await store.toggleTask(task.id, undefined, 30)
     expect(result?.task.completedAmount).toBe(30)
     expect(vi.mocked(api.patchTask)).toHaveBeenCalledWith(task.id, {
       completed: true,

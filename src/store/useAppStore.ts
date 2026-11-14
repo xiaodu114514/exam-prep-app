@@ -3,6 +3,7 @@ import type { AppData, AppTexts, Exam, StudySite, Subject, Task, UserProfile } f
 import * as api from '../services/api'
 import { clearUser } from '../services/storage'
 import { useToast } from '../composables/useToast'
+import { todayKey } from '../utils/date'
 
 /**
  * 集中式数据 store（模块级单例），服务器为权威数据源。
@@ -177,34 +178,61 @@ export function useAppStore() {
     }
   }
   /**
-   * 切换完成状态：乐观翻转 -> PATCH -> 用服务端响应（task + subject）替换本地状态；
-   * 失败回滚。背诵贡献完全由服务端事务计算，前端不叠加。
+   * 切换完成状态（每日任务按「任务 + 日期」独立）：
+   * - 普通任务：乐观翻转 -> PATCH -> 用服务端响应替换，失败回滚；
+   * - 每日任务：按指定日期提交（doneDate），完成状态以服务端 completions 为准。
+   * @param date 每日任务要完成/取消的日期（默认今天）
    * @param completedAmount 完成时填写的实际完成量（可选，默认使用任务计划量）
    */
   async function toggleTask(
     id: string,
+    date?: string,
     completedAmount?: number,
   ): Promise<{ task: Task; subject: Subject | null } | null> {
     const t = state.data.tasks.find((x) => x.id === id)
     if (!t) return null
-    const prev = t.completed
-    t.completed = !prev
+
+    const day = date ?? todayKey()
+    const isDaily = t.daily === true
+    const wasDone = isDaily
+      ? (t.completions?.some((c) => c.date === day) ?? false)
+      : t.completed
+
+    if (!isDaily) {
+      const prev = t.completed
+      t.completed = !prev
+      try {
+        const res = await api.patchTask(id, {
+          completed: !prev,
+          ...(completedAmount !== undefined ? { completedAmount } : {}),
+        })
+        replaceTask(res.task)
+        if (res.subject) replaceSubject(res.subject)
+        return { task: res.task, subject: res.subject }
+      } catch (e) {
+        t.completed = prev
+        toastError(e)
+        return null
+      }
+    }
+
+    // 每日任务：请求携带完成日期，服务端写入/删除该天记录（幂等，不乐观）
     try {
       const res = await api.patchTask(id, {
-        completed: !prev,
+        completed: !wasDone,
+        doneDate: day,
         ...(completedAmount !== undefined ? { completedAmount } : {}),
       })
       replaceTask(res.task)
       if (res.subject) replaceSubject(res.subject)
       return { task: res.task, subject: res.subject }
     } catch (e) {
-      t.completed = prev
       toastError(e)
       return null
     }
   }
 
-  async function updateTask(id: string, patch: Partial<Omit<Task, 'id'>>): Promise<boolean> {
+  async function updateTask(id: string, patch: api.TaskPatchInput): Promise<boolean> {
     try {
       const res = await api.patchTask(id, patch)
       replaceTask(res.task)
@@ -231,12 +259,23 @@ export function useAppStore() {
 
   /**
    * 某日期的任务列表：当天创建的普通任务 + 创建日早于该日期的每日任务。
+   * 每日任务的完成状态按该日期从 completions 派生（不同日期互不影响）。
    * 字符串日期（YYYY-MM-DD）可直接按字典序比较。
    */
   function tasksOn(date: string): Task[] {
-    return state.data.tasks.filter(
-      (x) => x.date === date || (x.daily === true && x.date <= date),
-    )
+    return state.data.tasks
+      .filter((x) => x.date === date || (x.daily === true && x.date <= date))
+      .map((t) => {
+        if (t.daily !== true) return t
+        const comp = t.completions?.find((c) => c.date === date)
+        return {
+          ...t,
+          completed: comp !== undefined,
+          completedAmount: comp?.completedAmount ?? null,
+          contributed: comp?.contributed ?? 0,
+          doneDate: comp?.date ?? null,
+        }
+      })
   }
 
   // ---------- 科目 ----------
