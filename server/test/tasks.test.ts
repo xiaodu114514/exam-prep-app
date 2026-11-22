@@ -501,3 +501,123 @@ describe('实际完成量（completedAmount）', () => {
     expect(subjectCompleted(db, subjectId)).toBe(0)
   })
 })
+
+describe('星期任务（weekdays）', () => {
+  function localToday(): string {
+    const d = new Date()
+    const p = (n: number) => (n < 10 ? `0${n}` : String(n))
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
+  function daysAgo(n: number): string {
+    const d = new Date()
+    d.setDate(d.getDate() - n)
+    const p = (x: number) => (x < 10 ? `0${x}` : String(x))
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
+
+  it('创建星期任务：返回 weekdays 数组（工作日）', async () => {
+    const { app, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const res = await authedRequest(app, cookie, 'POST', '/api/tasks', {
+      title: '工作日背单词',
+      date: localToday(),
+      subjectId,
+      amount: 20,
+      weekdays: [1, 2, 3, 4, 5],
+    })
+    expect(res.statusCode).toBe(201)
+    expect(res.json().task.weekdays).toEqual([1, 2, 3, 4, 5])
+    expect(res.json().task.daily).toBe(false)
+  })
+
+  it('每天 = weekdays 全选；兼容旧 daily 参数', async () => {
+    const { app, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const res = await authedRequest(app, cookie, 'POST', '/api/tasks', {
+      title: '每日背单词',
+      date: localToday(),
+      subjectId,
+      amount: 30,
+      daily: true,
+    })
+    expect(res.statusCode).toBe(201)
+    expect(res.json().task.weekdays).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(res.json().task.daily).toBe(true)
+  })
+
+  it('星期任务按日期完成（补录昨天）并支持修改星期', async () => {
+    const { app, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const created = await authedRequest(app, cookie, 'POST', '/api/tasks', {
+      title: '隔天背单词',
+      date: daysAgo(3),
+      subjectId,
+      amount: 10,
+      weekdays: [1, 3, 5],
+    })
+    const taskId = created.json().task.id as string
+
+    const done = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      completed: true,
+      doneDate: daysAgo(1),
+    })
+    expect(done.json().task.weekdays).toEqual([1, 3, 5])
+    expect(done.json().task.completions.map((c: { date: string }) => c.date)).toEqual([daysAgo(1)])
+
+    const changed = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      weekdays: [6, 7],
+    })
+    expect(changed.json().task.weekdays).toEqual([6, 7])
+  })
+
+  it('星期任务改回普通任务（weekdays: []），保留今天完成状态', async () => {
+    const { app, db, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const created = await authedRequest(app, cookie, 'POST', '/api/tasks', {
+      title: '背单词',
+      date: localToday(),
+      subjectId,
+      amount: 20,
+      weekdays: [1, 2, 3, 4, 5, 6, 7],
+    })
+    const taskId = created.json().task.id as string
+    await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, { completed: true })
+    expect(subjectCompleted(db, subjectId)).toBe(20)
+
+    const res = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, { weekdays: [] })
+    expect(res.json().task.weekdays).toEqual([])
+    expect(res.json().task.daily).toBe(false)
+    expect(res.json().task.completed).toBe(true)
+    expect(subjectCompleted(db, subjectId)).toBe(20)
+  })
+
+  it('普通任务改回星期任务', async () => {
+    const { app, subjectId } = setupSubject()
+    const { cookie } = await login(app)
+    const created = await authedRequest(app, cookie, 'POST', '/api/tasks', {
+      title: '普通任务',
+      date: localToday(),
+      subjectId,
+      amount: 20,
+    })
+    const taskId = created.json().task.id as string
+    const res = await authedRequest(app, cookie, 'PATCH', `/api/tasks/${taskId}`, {
+      weekdays: [1, 4],
+    })
+    expect(res.json().task.weekdays).toEqual([1, 4])
+    expect(res.json().task.completed).toBe(false)
+  })
+
+  it('非法 weekdays 返回 400', async () => {
+    const { app } = setupSubject()
+    const { cookie } = await login(app)
+    for (const bad of [[0], [8], ['a']]) {
+      const res = await authedRequest(app, cookie, 'POST', '/api/tasks', {
+        title: 'x',
+        date: localToday(),
+        weekdays: bad,
+      })
+      expect(res.statusCode).toBe(400)
+    }
+  })
+})

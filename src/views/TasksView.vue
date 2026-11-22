@@ -4,6 +4,7 @@ import { BookOpen, ChevronLeft, ChevronRight, ListTodo, Plus } from 'lucide-vue-
 import { useAppStore } from '../store/useAppStore'
 import { useToast } from '../composables/useToast'
 import { addDays, formatDateLong, todayKey } from '../utils/date'
+import { WEEKDAY_NAMES, WEEKDAYS_ALL, WEEKDAYS_WEEKEND, WEEKDAYS_WORKDAY, weekdaysLabel } from '../utils/weekday'
 import type { Subject, Task } from '../types'
 import ProgressBar from '../components/ProgressBar.vue'
 import TaskRow from '../components/TaskRow.vue'
@@ -130,12 +131,42 @@ const form = reactive({
   date: today,
   subjectId: null as string | null,
   amount: '' as string | number,
-  daily: false,
+  weekdays: [] as number[],
 })
 const formError = ref('')
 const pendingForm = ref(false)
 
 const selectedSubject = computed(() => store.getSubject(form.subjectId))
+
+// 星期快捷档位
+const isWorkday = computed(
+  () =>
+    form.weekdays.length === WEEKDAYS_WORKDAY.length &&
+    WEEKDAYS_WORKDAY.every((d) => form.weekdays.includes(d)),
+)
+const isWeekend = computed(
+  () =>
+    form.weekdays.length === WEEKDAYS_WEEKEND.length &&
+    WEEKDAYS_WEEKEND.every((d) => form.weekdays.includes(d)),
+)
+const isEveryday = computed(() => form.weekdays.length === 7)
+
+function toggleWeekday(d: number) {
+  if (form.weekdays.includes(d)) {
+    form.weekdays = form.weekdays.filter((x) => x !== d)
+  } else {
+    form.weekdays = [...form.weekdays, d].sort((a, b) => a - b)
+  }
+}
+
+function setWeekdays(kind: 'workday' | 'weekend' | 'all') {
+  form.weekdays =
+    kind === 'workday'
+      ? [...WEEKDAYS_WORKDAY]
+      : kind === 'weekend'
+        ? [...WEEKDAYS_WEEKEND]
+        : [...WEEKDAYS_ALL]
+}
 
 function openCreate() {
   editing.value = null
@@ -143,7 +174,7 @@ function openCreate() {
   form.date = selectedDate.value
   form.subjectId = null
   form.amount = ''
-  form.daily = false
+  form.weekdays = []
   formError.value = ''
   showForm.value = true
 }
@@ -154,7 +185,7 @@ function openEdit(task: Task) {
   form.date = task.date
   form.subjectId = task.subjectId
   form.amount = task.amount != null ? String(task.amount) : ''
-  form.daily = task.daily === true
+  form.weekdays = task.weekdays ? [...task.weekdays] : []
   formError.value = ''
   showForm.value = true
 }
@@ -189,7 +220,7 @@ async function submitForm() {
         date: form.date,
         subjectId: form.subjectId,
         amount,
-        daily: form.daily,
+        weekdays: form.weekdays,
       })
       if (!ok) return
       toast.success('任务已更新')
@@ -199,7 +230,7 @@ async function submitForm() {
         date: form.date,
         subjectId: form.subjectId,
         amount,
-        daily: form.daily,
+        weekdays: form.weekdays,
       })
       if (!task) return
       toast.success('任务已添加')
@@ -353,12 +384,53 @@ async function confirmRemove() {
         <p class="field-hint">勾选完成后，该数量会自动累计到「{{ selectedSubject?.name }}」的背诵进度</p>
       </div>
       <div class="field">
-        <label class="label" for="task-daily">任务类型</label>
-        <label class="switch-row" for="task-daily">
-          <input id="task-daily" v-model="form.daily" type="checkbox" />
-          <span>设为每日任务（从创建日起每天自动出现在任务列表）</span>
-        </label>
-        <p class="field-hint">每日任务的完成状态按天独立：今天勾选完成，明天自动回到未完成</p>
+        <label class="label">任务类型</label>
+        <div class="weekday-picker">
+          <div class="weekday-picker__quick">
+            <button
+              class="chip"
+              :class="{ 'chip--primary': isWorkday }"
+              type="button"
+              @click="setWeekdays('workday')"
+            >
+              工作日
+            </button>
+            <button
+              class="chip"
+              :class="{ 'chip--primary': isWeekend }"
+              type="button"
+              @click="setWeekdays('weekend')"
+            >
+              周末
+            </button>
+            <button
+              class="chip"
+              :class="{ 'chip--primary': isEveryday }"
+              type="button"
+              @click="setWeekdays('all')"
+            >
+              每天
+            </button>
+          </div>
+          <div class="weekday-picker__days">
+            <button
+              v-for="d in 7"
+              :key="d"
+              class="weekday-btn"
+              :class="{ 'weekday-btn--active': form.weekdays.includes(d) }"
+              type="button"
+              @click="toggleWeekday(d)"
+            >
+              {{ WEEKDAY_NAMES[d].slice(1) }}
+            </button>
+          </div>
+          <p v-if="form.weekdays.length" class="weekday-picker__summary">
+            已选：{{ weekdaysLabel(form.weekdays) }}
+          </p>
+        </div>
+        <p class="field-hint">
+          选中的星期自动出现；不选则仅在创建日出现。完成状态按天独立：今天勾选完成，明天自动回到未完成
+        </p>
       </div>
       <p v-if="formError" class="field-error">{{ formError }}</p>
       <template #footer>
@@ -503,20 +575,43 @@ async function confirmRemove() {
   line-height: 1.5;
 }
 
-.switch-row {
+/* 星期任务选择器 */
+.weekday-picker {
   display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 14px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  min-height: 32px;
-  user-select: none;
+  flex-direction: column;
+  gap: 10px;
 }
-.switch-row input[type='checkbox'] {
-  width: 17px;
-  height: 17px;
-  accent-color: var(--primary);
-  flex: none;
+.weekday-picker__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.weekday-picker__quick .chip {
+  cursor: pointer;
+}
+.weekday-picker__days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.weekday-btn {
+  min-height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.weekday-btn--active {
+  background: var(--primary-weak);
+  border-color: var(--primary-border);
+  color: var(--primary-strong);
+}
+.weekday-picker__summary {
+  font-size: 12.5px;
+  color: var(--text-muted);
 }
 </style>

@@ -53,10 +53,13 @@ export interface TaskRow {
   subject_id: string | null
   amount: number | null
   contributed: number
+  /** 废弃兼容字段（原每日任务标记，v6 起不再使用） */
   daily: number
   done_date: string | null
   /** 完成时填写的实际完成量（NULL = 未填写，使用计划量 amount） */
   completed_amount: number | null
+  /** 星期任务位掩码（bit0=周一 … bit6=周日；0 = 普通任务） */
+  weekdays: number
 }
 
 /** 每日任务某一天的完成记录 */
@@ -127,7 +130,7 @@ CREATE TABLE IF NOT EXISTS data_backups (
 `
 
 /** 当前程序支持的 schema 版本（与 PRAGMA user_version 对应） */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 /**
  * 迁移步骤列表：索引 = 当前 user_version，执行后写入 user_version = 索引 + 1。
@@ -197,6 +200,12 @@ const MIGRATIONS: Array<(db: DB) => void> = [
     for (const row of rows) {
       insert.run(row.id, row.done_date, row.completed_amount, row.contributed, row.subject_id)
     }
+  },
+  // v6：每日任务 -> 星期任务（weekdays 位掩码，bit0=周一 … bit6=周日；0=普通任务）
+  (db) => {
+    db.exec(`ALTER TABLE tasks ADD COLUMN weekdays INTEGER NOT NULL DEFAULT 0;`)
+    // 旧「每日任务」迁移为「每天」（全选 7 天），行为完全等价
+    db.exec(`UPDATE tasks SET weekdays = 127 WHERE daily = 1;`)
   },
 ]
 

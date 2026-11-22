@@ -4,8 +4,8 @@ import type { Config } from '../config'
 import type { DB, ExamRow, SubjectRow, TaskRow } from '../db'
 import { AppError, badRequest, unauthorized } from '../errors'
 import { optionalNumber, optionalString, requireDateKey, requireString } from '../validation'
-import { createTaskOperations } from './tasks'
-import { toTaskDto, todayKeyLocal } from './shared'
+import { createTaskOperations, parseWeekdays, taskDoneOn, taskOccursOn } from './tasks'
+import { maskToWeekdays, toTaskDto, todayKeyLocal, weekdaysToMask, WEEKDAYS_ALL } from './shared'
 
 /**
  * Agent 开放接口：供外部 Agent/脚本添加任务、查询完成度。
@@ -69,22 +69,15 @@ export function createAgentAuth(config: Config) {
   }
 }
 
-/** 按天取任务（含每日任务：创建日早于等于该天） */
+/** 按天取任务：普通任务（创建日当天）+ 星期任务（创建日不晚于该天且星期匹配） */
 function tasksOn(db: DB, day: string): TaskRow[] {
-  return db
-    .prepare(`SELECT * FROM tasks WHERE date = ? OR (daily = 1 AND date <= ?) ORDER BY rowid`)
-    .all(day, day) as TaskRow[]
+  const all = db.prepare(`SELECT * FROM tasks ORDER BY rowid`).all() as TaskRow[]
+  return all.filter((t) => taskOccursOn(t, day))
 }
 
-/** 任务在某天的有效完成态：每日任务查该天的 completion 记录，普通任务看 completed */
+/** 任务在某天的完成态：星期任务查该天 completion 记录，普通任务看 completed */
 function isDoneOn(db: DB, t: TaskRow, day: string): boolean {
-  if (t.daily === 1) {
-    const row = db
-      .prepare(`SELECT 1 AS ok FROM task_completions WHERE task_id = ? AND date = ?`)
-      .get(t.id, day)
-    return row !== undefined
-  }
-  return t.completed === 1
+  return taskDoneOn(db, t, day)
 }
 
 function buildStats(db: DB, date: string) {
@@ -141,7 +134,8 @@ function buildStats(db: DB, date: string) {
           subjectId: t.subject_id,
           subjectName: subject?.name ?? null,
           amount: t.amount,
-          daily: t.daily === 1,
+          daily: t.weekdays === WEEKDAYS_ALL,
+          weekdays: maskToWeekdays(t.weekdays),
         }
       }),
       bySubject,
@@ -190,13 +184,20 @@ export function registerAgentRoutes(app: FastifyInstance, db: DB, config: Config
     const amount = optionalNumber(body.amount, '背诵量')
     if (amount !== null && amount <= 0) throw badRequest('背诵量必须是大于 0 的数字')
     if (amount !== null && !subjectId) throw badRequest('填写背诵量时必须选择科目')
-    const daily = body.daily === true ? 1 : 0
+    // 星期任务（兼容旧 daily 参数：true = 每天）
+    const weekdaysRaw = parseWeekdays(body.weekdays)
+    const weekdaysMask =
+      weekdaysRaw !== undefined
+        ? weekdaysToMask(weekdaysRaw)
+        : body.daily === true
+          ? WEEKDAYS_ALL
+          : 0
 
     const id = randomUUID()
     db.prepare(
-      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, daily, done_date)
+      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, weekdays, done_date)
        VALUES (?, ?, ?, 0, ?, ?, 0, ?, NULL)`,
-    ).run(id, title, date, subjectId, amount, daily)
+    ).run(id, title, date, subjectId, amount, weekdaysMask)
     const row = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow
     return reply.status(201).send({ task: toTaskDto(row) })
   })
@@ -226,7 +227,8 @@ export function registerAgentRoutes(app: FastifyInstance, db: DB, config: Config
         completed: isDoneOn(db, t, date),
         subjectId: t.subject_id,
         amount: t.amount,
-        daily: t.daily === 1,
+        daily: t.weekdays === WEEKDAYS_ALL,
+        weekdays: maskToWeekdays(t.weekdays),
       })),
     }
   })

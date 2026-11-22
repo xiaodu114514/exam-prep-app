@@ -4,6 +4,7 @@ import * as api from '../services/api'
 import { clearUser } from '../services/storage'
 import { useToast } from '../composables/useToast'
 import { todayKey } from '../utils/date'
+import { weekdayOf } from '../utils/weekday'
 
 /**
  * 集中式数据 store（模块级单例），服务器为权威数据源。
@@ -22,8 +23,8 @@ export interface TaskInput {
   subjectId: string | null
   /** 背诵量，仅关联科目时有效 */
   amount: number | null
-  /** 每日任务：从创建日起每天自动出现 */
-  daily?: boolean
+  /** 星期任务：1=周一 … 7=周日；空数组 = 普通任务 */
+  weekdays?: number[]
 }
 
 export interface SubjectInput {
@@ -193,12 +194,12 @@ export function useAppStore() {
     if (!t) return null
 
     const day = date ?? todayKey()
-    const isDaily = t.daily === true
-    const wasDone = isDaily
+    const isWeekly = (t.weekdays?.length ?? 0) > 0
+    const wasDone = isWeekly
       ? (t.completions?.some((c) => c.date === day) ?? false)
       : t.completed
 
-    if (!isDaily) {
+    if (!isWeekly) {
       const prev = t.completed
       t.completed = !prev
       try {
@@ -216,7 +217,7 @@ export function useAppStore() {
       }
     }
 
-    // 每日任务：请求携带完成日期，服务端写入/删除该天记录（幂等，不乐观）
+    // 星期任务：请求携带完成日期，服务端写入/删除该天记录（幂等，不乐观）
     try {
       const res = await api.patchTask(id, {
         completed: !wasDone,
@@ -258,15 +259,22 @@ export function useAppStore() {
   }
 
   /**
-   * 某日期的任务列表：当天创建的普通任务 + 创建日早于该日期的每日任务。
-   * 每日任务的完成状态按该日期从 completions 派生（不同日期互不影响）。
-   * 字符串日期（YYYY-MM-DD）可直接按字典序比较。
+   * 某日期的任务列表：
+   * - 普通任务：创建日当天出现；
+   * - 星期任务：创建日不晚于该日期，且该日期的星期几在任务 weekdays 中。
+   * 星期任务的完成状态按该日期从 completions 派生（不同日期互不影响）。
    */
   function tasksOn(date: string): Task[] {
+    const wd = weekdayOf(date)
     return state.data.tasks
-      .filter((x) => x.date === date || (x.daily === true && x.date <= date))
+      .filter((x) => {
+        if (x.weekdays && x.weekdays.length > 0) {
+          return x.date <= date && x.weekdays.includes(wd)
+        }
+        return x.date === date
+      })
       .map((t) => {
-        if (t.daily !== true) return t
+        if (!t.weekdays || t.weekdays.length === 0) return t
         const comp = t.completions?.find((c) => c.date === date)
         return {
           ...t,

@@ -51,9 +51,11 @@ export interface Task {
   contributed?: number
   /** 完成任务时填写的实际完成量（未完成或未填写时为 null） */
   completedAmount?: number | null
-  /** 每日任务的历史完成记录（按日期独立；普通任务为空数组） */
+  /** 星期任务的历史完成记录（按日期独立；普通任务为空数组） */
   completions?: TaskCompletion[]
-  /** 每日任务：从创建日起每天自动出现在任务列表，完成状态按天独立 */
+  /** 星期任务：1=周一 … 7=周日；空数组 = 普通任务 */
+  weekdays?: number[]
+  /** 兼容旧字段：是否每天（等于星期全选） */
   daily?: boolean
   /** 每日任务最近完成日期（YYYY-MM-DD） */
   doneDate?: string | null

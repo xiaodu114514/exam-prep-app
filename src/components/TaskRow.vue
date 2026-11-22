@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Check, Pencil, Trash2 } from 'lucide-vue-next'
 import type { Task } from '../types'
+import { weekdaysLabel } from '../utils/weekday'
 
 defineProps<{
   task: Task
@@ -30,8 +31,11 @@ const emit = defineEmits<{
 
     <div class="task-row__main">
       <p class="task-row__title">{{ task.title }}</p>
-      <div v-if="task.daily || subjectName || (task.amount && task.amount > 0)" class="task-row__meta">
-        <span v-if="task.daily" class="chip">每日</span>
+      <div
+        v-if="(task.weekdays?.length ?? 0) > 0 || subjectName || (task.amount && task.amount > 0)"
+        class="task-row__meta"
+      >
+        <span v-if="(task.weekdays?.length ?? 0) > 0" class="chip">{{ weekdaysLabel(task.weekdays) }}</span>
         <span v-if="subjectName" class="chip chip--primary">{{ subjectName }}</span>
         <span v-if="task.amount && task.amount > 0" class="chip chip--amount">
           +{{ task.amount }} {{ subjectUnit }}

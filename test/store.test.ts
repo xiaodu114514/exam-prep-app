@@ -248,7 +248,7 @@ describe('每日任务：tasksOn 按天展开', () => {
     return store
   }
 
-  it('每日任务从创建日起每天出现，创建日前不出现', async () => {
+  it('星期任务从创建日起每天出现，创建日前不出现', async () => {
     const store = await storeWithTasks([
       {
         id: 'd1',
@@ -257,13 +257,33 @@ describe('每日任务：tasksOn 按天展开', () => {
         completed: false,
         subjectId: null,
         amount: null,
-        daily: true,
+        weekdays: [1, 2, 3, 4, 5, 6, 7],
         doneDate: null,
       },
     ])
     expect(store.tasksOn('2025-10-31')).toHaveLength(0)
     expect(store.tasksOn('2025-11-01')).toHaveLength(1)
     expect(store.tasksOn('2025-11-10')).toHaveLength(1)
+  })
+
+  it('星期任务只在指定星期出现（工作日任务周末不出现）', async () => {
+    const store = await storeWithTasks([
+      {
+        id: 'w1',
+        title: '工作日任务',
+        date: '2025-10-27', // 周一
+        completed: false,
+        subjectId: null,
+        amount: null,
+        weekdays: [1, 2, 3, 4, 5],
+      },
+    ])
+    // 2025-10-27 周一 ~ 10-31 周五出现
+    expect(store.tasksOn('2025-10-27')).toHaveLength(1)
+    expect(store.tasksOn('2025-10-31')).toHaveLength(1)
+    // 11-01 周六、11-02 周日不出现
+    expect(store.tasksOn('2025-11-01')).toHaveLength(0)
+    expect(store.tasksOn('2025-11-02')).toHaveLength(0)
   })
 
   it('普通任务只在创建日出现', async () => {

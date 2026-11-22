@@ -215,11 +215,12 @@ describe('每日任务按日期独立记录（task_completions）', () => {
   })
 })
 
-describe('schema v4 -> v5 迁移', () => {
-  it('done_date 完成记录迁移为 task_completions，迁移幂等', () => {
+describe('schema v4 -> v6 迁移', () => {
+  it('done_date 完成记录迁移为 task_completions，daily 迁移为 weekdays，迁移幂等', () => {
     const db = openDatabase(':memory:')
-    // 构造 v4 形态：删除新表并回退版本号
+    // 构造 v4 形态：删除新表/新列并回退版本号
     db.exec(`DROP TABLE task_completions`)
+    db.exec(`ALTER TABLE tasks DROP COLUMN weekdays`)
     db.pragma('user_version = 4')
     db.prepare(
       `INSERT INTO subjects (id, name, unit, total, completed) VALUES ('s1','英语','单词',100,30)`,
@@ -230,7 +231,7 @@ describe('schema v4 -> v5 迁移', () => {
     ).run()
 
     migrate(db)
-    expect(db.pragma('user_version', { simple: true })).toBe(5)
+    expect(db.pragma('user_version', { simple: true })).toBe(6)
     const row = db.prepare(`SELECT * FROM task_completions WHERE task_id = 't1'`).get() as {
       date: string
       completed_amount: number | null
@@ -241,6 +242,12 @@ describe('schema v4 -> v5 迁移', () => {
     expect(row.contributed).toBe(30)
     expect(row.subject_id).toBe('s1')
 
+    // daily=1 迁移为 weekdays 全选（127）
+    const task = db.prepare(`SELECT weekdays FROM tasks WHERE id = 't1'`).get() as {
+      weekdays: number
+    }
+    expect(task.weekdays).toBe(127)
+
     // 再次迁移不重复
     migrate(db)
     const count = db.prepare(`SELECT COUNT(*) c FROM task_completions`).get() as { c: number }
@@ -248,9 +255,10 @@ describe('schema v4 -> v5 迁移', () => {
     db.close()
   })
 
-  it('无 done_date 的每日任务不生成历史记录', () => {
+  it('无 done_date 的星期任务不生成历史记录', () => {
     const db = openDatabase(':memory:')
     db.exec(`DROP TABLE task_completions`)
+    db.exec(`ALTER TABLE tasks DROP COLUMN weekdays`)
     db.pragma('user_version = 4')
     db.prepare(
       `INSERT INTO subjects (id, name, unit, total, completed) VALUES ('s1','英语','单词',100,0)`,

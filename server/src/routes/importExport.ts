@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { DB } from '../db'
 import { badRequest } from '../errors'
 import { readAllData } from './data'
+import { weekdaysToMask } from './shared'
 import type { AuthPreHandler } from './tasks'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -44,11 +45,14 @@ export interface ImportedTask {
   subjectId: string | null
   amount: number | null
   contributed: number
+  /** 兼容旧字段：是否每天（等于 weekdays 全选） */
   daily: boolean
+  /** 星期任务（1=周一 … 7=周日；空 = 普通任务） */
+  weekdays: number[]
   doneDate: string | null
   /** 完成时填写的实际完成量（未填写时为 null） */
   completedAmount: number | null
-  /** 每日任务的历史完成记录 */
+  /** 星期任务的历史完成记录 */
   completions: ImportedCompletion[]
 }
 
@@ -125,10 +129,21 @@ export function normalizeImport(raw: unknown): NormalizeResult {
       return { ok: false, error: `任务「${title}」引用了不存在的科目，请先补全科目数据再导入` }
     }
     const daily = item.daily === true
+    // 星期任务：weekdays 数组（1=周一…7=周日）；旧备份只有 daily（true=每天）
+    const weekdays: number[] = Array.isArray(item.weekdays)
+      ? item.weekdays
+          .map((d) => Number(d))
+          .filter((d) => Number.isInteger(d) && d >= 1 && d <= 7)
+      : daily
+        ? [1, 2, 3, 4, 5, 6, 7]
+        : []
+    const isWeekdayTask = weekdays.length > 0
     const doneDate =
-      daily && typeof item.doneDate === 'string' && DATE_RE.test(item.doneDate) ? item.doneDate : null
-    // 每日任务：完成态以 doneDate 是否为今天决定；普通任务沿用 completed 字段
-    const completed = daily ? doneDate === todayKey() : item.completed === true
+      isWeekdayTask && typeof item.doneDate === 'string' && DATE_RE.test(item.doneDate)
+        ? item.doneDate
+        : null
+    // 星期任务：完成态以 doneDate 是否为今天决定；普通任务沿用 completed 字段
+    const completed = isWeekdayTask ? doneDate === todayKey() : item.completed === true
     const amount =
       typeof item.amount === 'number' && Number.isFinite(item.amount) && item.amount > 0
         ? item.amount
@@ -158,7 +173,7 @@ export function normalizeImport(raw: unknown): NormalizeResult {
             : 0
         completions.push({ date: c.date, completedAmount: compAmount, contributed: compContributed })
       }
-    } else if (daily && completed && doneDate) {
+    } else if (isWeekdayTask && completed && doneDate) {
       completions.push({ date: doneDate, completedAmount, contributed: effectiveAmount ?? 0 })
     }
 
@@ -170,7 +185,8 @@ export function normalizeImport(raw: unknown): NormalizeResult {
       subjectId,
       amount,
       contributed: completed && subjectId && effectiveAmount !== null ? effectiveAmount : 0,
-      daily,
+      daily: isWeekdayTask && weekdays.length === 7,
+      weekdays,
       doneDate,
       completedAmount,
       completions,
@@ -235,8 +251,8 @@ export function registerImportExportRoutes(app: FastifyInstance, db: DB, auth: A
     for (const s of data.sites) insSite.run(s.id, s.name, s.url)
 
     const insTask = db.prepare(
-      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, daily, done_date, completed_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, daily, weekdays, done_date, completed_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     for (const t of data.tasks) {
       insTask.run(
@@ -248,18 +264,19 @@ export function registerImportExportRoutes(app: FastifyInstance, db: DB, auth: A
         t.amount,
         t.contributed,
         t.daily ? 1 : 0,
+        weekdaysToMask(t.weekdays),
         t.doneDate,
         t.completedAmount,
       )
     }
 
-    // 每日任务历史完成记录（导入为替换快照，不重复累加）
+    // 星期任务历史完成记录（导入为替换快照，不重复累加）
     const insCompletion = db.prepare(
       `INSERT OR IGNORE INTO task_completions (task_id, date, completed_amount, contributed, subject_id)
        VALUES (?, ?, ?, ?, ?)`,
     )
     for (const t of data.tasks) {
-      if (!t.daily) continue
+      if (t.weekdays.length === 0) continue
       for (const c of t.completions) {
         insCompletion.run(t.id, c.date, c.completedAmount, c.contributed, t.subjectId)
       }

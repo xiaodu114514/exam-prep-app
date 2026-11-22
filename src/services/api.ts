@@ -86,10 +86,13 @@ export interface TaskPatchInput {
   completed?: boolean
   subjectId?: string | null
   amount?: number | null
+  /** 星期任务：1=周一 … 7=周日；空数组 = 普通任务 */
+  weekdays?: number[]
+  /** @deprecated 兼容旧参数：true = 每天 */
   daily?: boolean
   /** 完成时填写的实际完成量（勾选完成时可选） */
   completedAmount?: number | null
-  /** 每日任务：完成/取消的日期（YYYY-MM-DD，默认今天） */
+  /** 星期任务：完成/取消的日期（YYYY-MM-DD，默认今天） */
   doneDate?: string
 }
 
@@ -98,7 +101,8 @@ export const createTask = (input: {
   date: string
   subjectId: string | null
   amount: number | null
-  daily?: boolean
+  /** 星期任务：1=周一 … 7=周日；空数组 = 普通任务 */
+  weekdays?: number[]
 }) => request<{ task: Task }>('POST', '/api/tasks', input)
 
 export const patchTask = (id: string, patch: TaskPatchInput) =>

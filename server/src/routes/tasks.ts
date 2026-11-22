@@ -4,7 +4,7 @@ import type { CompletionRow, DB, SubjectRow, TaskRow } from '../db'
 import { badRequest, notFound } from '../errors'
 import { optionalNumber, optionalString, requireDateKey, requireString } from '../validation'
 import { computeCompletion, computeRevoke } from '../domain'
-import { toSubjectDto, toTaskDto, todayKeyLocal } from './shared'
+import { maskToWeekdays, toSubjectDto, toTaskDto, todayKeyLocal, weekdaysToMask, WEEKDAYS_ALL } from './shared'
 
 export type AuthPreHandler = (req: FastifyRequest) => Promise<void>
 
@@ -14,10 +14,13 @@ export interface TaskPatch {
   completed?: boolean
   subjectId?: string | null
   amount?: number | null
+  /** 星期任务：1=周一 … 7=周日；空数组 = 普通任务 */
+  weekdays?: number[]
+  /** @deprecated 兼容旧参数：true -> 每天（全选），false -> 普通任务 */
   daily?: boolean
   /** 完成时填写的实际完成量（可选，默认使用计划量） */
   completedAmount?: number | null
-  /** 每日任务：完成/取消的日期（YYYY-MM-DD，默认今天） */
+  /** 星期任务：完成/取消的日期（YYYY-MM-DD，默认今天） */
   doneDate?: string
 }
 
@@ -44,6 +47,21 @@ function parseAmount(amount: number | null, subjectId: string | null): number | 
   return amount
 }
 
+/** 校验星期数组（1-7），返回去重后的数组 */
+export function parseWeekdays(raw: unknown): number[] | undefined {
+  if (raw === undefined) return undefined
+  if (!Array.isArray(raw)) throw badRequest('weekdays 必须是数组（1=周一 … 7=周日）')
+  const days: number[] = []
+  for (const item of raw) {
+    const n = Number(item)
+    if (!Number.isInteger(n) || n < 1 || n > 7) {
+      throw badRequest('weekdays 取值应为 1-7（周一~周日）')
+    }
+    if (!days.includes(n)) days.push(n)
+  }
+  return days
+}
+
 /** 以增量调整科目已完成量（限制在 [0, total]） */
 function shiftSubject(db: DB, subjectId: string, delta: number): void {
   const subject = findSubject(db, subjectId)
@@ -65,13 +83,13 @@ function listCompletions(db: DB, taskId: string): CompletionRow[] {
 }
 
 /**
- * 每日任务完成某一天（幂等）：
+ * 星期任务完成某一天（幂等）：
  * - 无记录：按实际完成量计算贡献并写入；
  * - 已有记录且未指定新完成量：幂等，不重复累计；
  * - 已有记录且指定了新完成量：先撤销旧贡献再按新值重算。
  * 返回受影响的科目 id（无科目时 null）。
  */
-function completeDailyOn(db: DB, task: TaskRow, targetDate: string, patch: TaskPatch): string | null {
+function completeOn(db: DB, task: TaskRow, targetDate: string, patch: TaskPatch): string | null {
   const existing = findCompletion(db, task.id, targetDate)
   const wantAmount =
     patch.completedAmount !== undefined
@@ -116,8 +134,8 @@ function completeDailyOn(db: DB, task: TaskRow, targetDate: string, patch: TaskP
   return task.subject_id
 }
 
-/** 取消每日任务某一天的完成（幂等）：撤销该天贡献并删除记录 */
-function uncompleteDailyOn(db: DB, task: TaskRow, targetDate: string): string | null {
+/** 取消星期任务某一天的完成（幂等）：撤销该天贡献并删除记录 */
+function uncompleteOn(db: DB, task: TaskRow, targetDate: string): string | null {
   const existing = findCompletion(db, task.id, targetDate)
   if (!existing) return null
   if (existing.contributed > 0 && existing.subject_id) {
@@ -127,9 +145,16 @@ function uncompleteDailyOn(db: DB, task: TaskRow, targetDate: string): string | 
   return existing.subject_id
 }
 
+/** 计算补丁后的目标星期掩码（优先 weekdays，兼容旧 daily 参数） */
+function resolveNextWeekdays(old: TaskRow, patch: TaskPatch): number {
+  if (patch.weekdays !== undefined) return weekdaysToMask(patch.weekdays)
+  if (patch.daily !== undefined) return patch.daily ? WEEKDAYS_ALL : 0
+  return old.weekdays
+}
+
 /**
  * 任务核心操作（供 Web API 与 Agent API 共用）：
- * - patchTask：更新/勾选（每日任务按 (task_id, date) 记录完成，普通任务保持原逻辑）；
+ * - patchTask：更新/勾选（星期任务按 (task_id, date) 记录完成，普通任务保持原逻辑）；
  * - deleteTask：删除任务并撤销其全部贡献。
  */
 export function createTaskOperations(db: DB) {
@@ -137,9 +162,10 @@ export function createTaskOperations(db: DB) {
     const old = findTask(db, id)
     if (!old) throw notFound('任务不存在')
     const today = todayKeyLocal()
+    const nextWeekdays = resolveNextWeekdays(old, patch)
 
-    // ================= 每日任务 =================
-    if (old.daily === 1) {
+    // ================= 星期任务（原每日任务） =================
+    if (old.weekdays > 0) {
       const targetDate = patch.doneDate ?? today
       let affectedSubjectId: string | null = null
 
@@ -150,17 +176,17 @@ export function createTaskOperations(db: DB) {
       if (nextSubjectId && nextSubjectId !== old.subject_id) ensureSubjectExists(db, nextSubjectId)
 
       if (patch.completed === true) {
-        affectedSubjectId = completeDailyOn(db, old, targetDate, patch)
+        affectedSubjectId = completeOn(db, old, targetDate, patch)
       } else if (patch.completed === false) {
-        affectedSubjectId = uncompleteDailyOn(db, old, targetDate)
+        affectedSubjectId = uncompleteOn(db, old, targetDate)
       }
 
-      // 每日 -> 普通：保留“今天是否完成”为普通任务完成态
-      if (patch.daily === false) {
+      // 星期任务 -> 普通任务：保留“今天是否完成”为普通任务完成态
+      if (nextWeekdays === 0) {
         const compsBefore = listCompletions(db, old.id)
         const todayComp = compsBefore.find((c) => c.date === today)
         db.prepare(
-          `UPDATE tasks SET title=?, amount=?, subject_id=?, daily=0, completed=?, done_date=NULL, contributed=?, completed_amount=? WHERE id=?`,
+          `UPDATE tasks SET title=?, amount=?, subject_id=?, weekdays=0, completed=?, done_date=NULL, contributed=?, completed_amount=? WHERE id=?`,
         ).run(
           nextTitle,
           nextAmount,
@@ -180,12 +206,13 @@ export function createTaskOperations(db: DB) {
       const last = comps.length > 0 ? comps[comps.length - 1] : null
       const todayComp = comps.find((c) => c.date === today)
       db.prepare(
-        `UPDATE tasks SET title=?, date=?, amount=?, subject_id=?, daily=1, done_date=?, contributed=?, completed_amount=?, completed=? WHERE id=?`,
+        `UPDATE tasks SET title=?, date=?, amount=?, subject_id=?, weekdays=?, done_date=?, contributed=?, completed_amount=?, completed=? WHERE id=?`,
       ).run(
         nextTitle,
         nextDate,
         nextAmount,
         nextSubjectId,
+        nextWeekdays,
         last?.date ?? null,
         todayComp?.contributed ?? 0,
         todayComp?.completed_amount ?? null,
@@ -199,8 +226,8 @@ export function createTaskOperations(db: DB) {
     }
 
     // ================= 普通任务 =================
-    // 普通 -> 每日：撤销普通完成贡献并重置为“今天未完成”
-    if (patch.daily === true) {
+    // 普通 -> 星期任务：重置为“今天未完成”（撤销普通完成态贡献）
+    if (nextWeekdays > 0) {
       if (old.completed === 1 && old.subject_id) {
         const subject = findSubject(db, old.subject_id)
         if (subject) {
@@ -213,8 +240,8 @@ export function createTaskOperations(db: DB) {
       const nextSubjectId = patch.subjectId !== undefined ? patch.subjectId : old.subject_id
       if (nextSubjectId && nextSubjectId !== old.subject_id) ensureSubjectExists(db, nextSubjectId)
       db.prepare(
-        `UPDATE tasks SET title=?, amount=?, subject_id=?, daily=1, completed=0, done_date=NULL, contributed=0, completed_amount=NULL WHERE id=?`,
-      ).run(nextTitle, nextAmount, nextSubjectId, id)
+        `UPDATE tasks SET title=?, amount=?, subject_id=?, weekdays=?, completed=0, done_date=NULL, contributed=0, completed_amount=NULL WHERE id=?`,
+      ).run(nextTitle, nextAmount, nextSubjectId, nextWeekdays, id)
       const updated = findTask(db, id)!
       const affected = nextSubjectId ? findSubject(db, nextSubjectId) : undefined
       return { task: toTaskDto(updated, []), subject: affected ? toSubjectDto(affected) : null }
@@ -272,7 +299,7 @@ export function createTaskOperations(db: DB) {
     }
 
     db.prepare(
-      `UPDATE tasks SET title=?, date=?, completed=?, subject_id=?, amount=?, contributed=?, daily=0, done_date=NULL, completed_amount=? WHERE id=?`,
+      `UPDATE tasks SET title=?, date=?, completed=?, subject_id=?, amount=?, contributed=?, weekdays=0, done_date=NULL, completed_amount=? WHERE id=?`,
     ).run(
       next.title,
       next.date,
@@ -293,8 +320,8 @@ export function createTaskOperations(db: DB) {
     const old = findTask(db, id)
     if (!old) throw notFound('任务不存在')
 
-    if (old.daily === 1) {
-      // 每日任务：撤销所有历史完成记录的贡献，再删除任务（completions 级联删除）
+    if (old.weekdays > 0) {
+      // 星期任务：撤销所有历史完成记录的贡献，再删除任务（completions 级联删除）
       const comps = listCompletions(db, old.id)
       for (const c of comps) {
         if (c.contributed > 0 && c.subject_id) shiftSubject(db, c.subject_id, -c.contributed)
@@ -322,13 +349,21 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
     const subjectId = optionalString(body.subjectId)
     if (subjectId) ensureSubjectExists(db, subjectId)
     const amount = parseAmount(optionalNumber(body.amount, '背诵量'), subjectId)
-    const daily = body.daily === true ? 1 : 0
+
+    const weekdays = parseWeekdays(body.weekdays)
+    // 兼容旧参数 daily：true 等价于每天（全选）
+    const weekdaysMask =
+      weekdays !== undefined
+        ? weekdaysToMask(weekdays)
+        : body.daily === true
+          ? WEEKDAYS_ALL
+          : 0
 
     const id = randomUUID()
     db.prepare(
-      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, daily, done_date)
+      `INSERT INTO tasks (id, title, date, completed, subject_id, amount, contributed, weekdays, done_date)
        VALUES (?, ?, ?, 0, ?, ?, 0, ?, NULL)`,
-    ).run(id, title, date, subjectId, amount, daily)
+    ).run(id, title, date, subjectId, amount, weekdaysMask)
     const row = findTask(db, id)!
     return reply.status(201).send({ task: toTaskDto(row) })
   })
@@ -346,6 +381,7 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
     }
     if (body.subjectId !== undefined) patch.subjectId = optionalString(body.subjectId)
     if (body.amount !== undefined) patch.amount = optionalNumber(body.amount, '背诵量')
+    if (body.weekdays !== undefined) patch.weekdays = parseWeekdays(body.weekdays) ?? []
     if (body.daily !== undefined) {
       if (typeof body.daily !== 'boolean') throw badRequest('daily 必须是布尔值')
       patch.daily = body.daily
@@ -377,3 +413,27 @@ export function registerTaskRoutes(app: FastifyInstance, db: DB, auth: AuthPreHa
     return { ok: true }
   })
 }
+
+/** 任务在某天是否应出现（供 Agent 统计使用） */
+export function taskOccursOn(task: TaskRow, date: string): boolean {
+  if (task.weekdays > 0) {
+    const [y, m, d] = date.split('-').map(Number)
+    const wd = new Date(y, m - 1, d).getDay()
+    const weekday = wd === 0 ? 7 : wd
+    return task.date <= date && (task.weekdays & (1 << (weekday - 1))) !== 0
+  }
+  return task.date === date
+}
+
+/** 任务在某天是否完成（星期任务查 completion 记录，普通任务看 completed） */
+export function taskDoneOn(db: DB, task: TaskRow, date: string): boolean {
+  if (task.weekdays > 0) {
+    const row = db
+      .prepare(`SELECT 1 AS ok FROM task_completions WHERE task_id = ? AND date = ?`)
+      .get(task.id, date)
+    return row !== undefined
+  }
+  return task.completed === 1
+}
+
+export { maskToWeekdays }

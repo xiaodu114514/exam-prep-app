@@ -7,8 +7,29 @@ export function todayKeyLocal(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
+/** 星期集合（1=周一 … 7=周日）-> 位掩码 */
+export function weekdaysToMask(days: number[]): number {
+  let mask = 0
+  for (const d of days) {
+    if (Number.isInteger(d) && d >= 1 && d <= 7) mask |= 1 << (d - 1)
+  }
+  return mask
+}
+
+/** 位掩码 -> 星期集合 */
+export function maskToWeekdays(mask: number): number[] {
+  const days: number[] = []
+  for (let i = 0; i < 7; i++) {
+    if (mask & (1 << i)) days.push(i + 1)
+  }
+  return days
+}
+
+/** 全选（每天） */
+export const WEEKDAYS_ALL = 127
+
 export function toTaskDto(row: TaskRow, completions: CompletionRow[] = []) {
-  if (row.daily === 1) {
+  if (row.weekdays > 0) {
     const today = todayKeyLocal()
     const sorted = [...completions].sort((a, b) => a.date.localeCompare(b.date))
     const todayComp = sorted.find((c) => c.date === today)
@@ -24,7 +45,10 @@ export function toTaskDto(row: TaskRow, completions: CompletionRow[] = []) {
       // 兼容语义：今天贡献量（历史日期见 completions）
       contributed: todayComp?.contributed ?? 0,
       completedAmount: todayComp?.completed_amount ?? null,
-      daily: true,
+      /** 兼容旧字段：是否“每天”（全选 7 天） */
+      daily: row.weekdays === WEEKDAYS_ALL,
+      /** 星期任务：1=周一 … 7=周日；空数组 = 普通任务 */
+      weekdays: maskToWeekdays(row.weekdays),
       doneDate: last?.date ?? null,
       completions: sorted.map((c) => ({
         date: c.date,
@@ -45,6 +69,7 @@ export function toTaskDto(row: TaskRow, completions: CompletionRow[] = []) {
     contributed: row.contributed,
     completedAmount: completed ? row.completed_amount : null,
     daily: false,
+    weekdays: [] as number[],
     doneDate: null,
     completions: [] as Array<{ date: string; completedAmount: number | null; contributed: number }>,
   }

@@ -11,6 +11,7 @@ import {
 } from 'lucide-vue-next'
 import { useAppStore } from '../store/useAppStore'
 import { daysBetween, formatDateLong, todayKey } from '../utils/date'
+import { weekdaysLabel } from '../utils/weekday'
 import type { Task } from '../types'
 import ProgressBar from '../components/ProgressBar.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -171,8 +172,13 @@ function normalizeUrl(url: string) {
               <span class="home-task__title" :class="{ 'home-task__title--done': task.completed }">
                 {{ task.title }}
               </span>
-              <span v-if="task.daily || subjectOf(task) || amountOf(task) > 0" class="home-task__meta">
-                <span v-if="task.daily" class="chip">每日</span>
+              <span
+                v-if="(task.weekdays?.length ?? 0) > 0 || subjectOf(task) || amountOf(task) > 0"
+                class="home-task__meta"
+              >
+                <span v-if="(task.weekdays?.length ?? 0) > 0" class="chip">
+                  {{ weekdaysLabel(task.weekdays) }}
+                </span>
                 <span v-if="subjectOf(task)" class="chip chip--primary">{{ subjectOf(task)?.name }}</span>
                 <span v-if="amountOf(task) > 0" class="chip chip--amount">
                   +{{ task.amount }} {{ subjectOf(task)?.unit }}

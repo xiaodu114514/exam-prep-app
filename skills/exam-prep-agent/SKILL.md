@@ -26,9 +26,16 @@ description: 稳步备考（exam-prep）学习管理技能。通过 HTTP API 添
   "date": "2026-10-21",          // 可选，YYYY-MM-DD，默认今天
   "subjectId": "科目 id",        // 可选，从 /api/agent/stats 的 subjects[].id 获取
   "amount": 50,                  // 可选，背诵量（必须配合 subjectId）
-  "daily": true                  // 可选，true = 每日任务（每天自动出现）
+  "weekdays": [1, 2, 3, 4, 5]    // 可选，星期任务：1=周一 … 7=周日；空数组/省略=普通任务
 }
 ```
+
+**星期任务说明**：
+- `weekdays: [1,2,3,4,5]` = 工作日任务（仅周一至周五出现）；
+- `weekdays: [6,7]` = 周末任务；
+- `weekdays: [1,2,3,4,5,6,7]` = 每天（等价旧「每日任务」）；
+- 可以任意组合，如 `[1,3,5]` = 周一/三/五；
+- 旧参数 `"daily": true` 仍兼容（等价 weekdays 全选），但新调用建议用 `weekdays`。
 
 成功返回 `201`：
 
@@ -42,7 +49,8 @@ description: 稳步备考（exam-prep）学习管理技能。通过 HTTP API 添
     "subjectId": "…",
     "amount": 50,
     "contributed": 0,
-    "daily": true,
+    "weekdays": [1, 2, 3, 4, 5],
+    "daily": false,
     "doneDate": null
   }
 }
@@ -61,7 +69,7 @@ description: 稳步备考（exam-prep）学习管理技能。通过 HTTP API 添
       {
         "id": "…", "title": "单词", "completed": false,
         "subjectId": "…", "subjectName": "英语",
-        "amount": 40, "daily": true
+        "amount": 40, "weekdays": [1, 2, 3, 4, 5, 6, 7]
       }
     ],
     "bySubject": [
@@ -88,7 +96,7 @@ description: 稳步备考（exam-prep）学习管理技能。通过 HTTP API 添
   "date": "2026-10-20",
   "tasks": [
     { "id": "…", "title": "单词", "completed": false,
-      "subjectId": "…", "amount": 40, "daily": true }
+      "subjectId": "…", "amount": 40, "weekdays": [1, 2, 3, 4, 5, 6, 7] }
   ]
 }
 ```
@@ -135,17 +143,22 @@ curl -s -X POST "$BASE/api/agent/tasks" \
   -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"title":"行测·判断推理 20 道"}'
 
-# 添加每日背诵任务（需科目 id）
+# 添加工作日背诵任务（需科目 id，周一至周五出现）
 curl -s -X POST "$BASE/api/agent/tasks" \
   -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"title":"背单词 50 个","subjectId":"<科目id>","amount":50,"daily":true}'
+  -d '{"title":"背单词 50 个","subjectId":"<科目id>","amount":50,"weekdays":[1,2,3,4,5]}'
+
+# 每天出现的任务（等价旧每日任务）
+curl -s -X POST "$BASE/api/agent/tasks" \
+  -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"title":"每日背单词","subjectId":"<科目id>","amount":30,"weekdays":[1,2,3,4,5,6,7]}'
 
 # 打勾完成（今天，实际完成 30）
 curl -s -X POST "$BASE/api/agent/tasks/<任务id>/complete" \
   -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"completed":true,"completedAmount":30}'
 
-# 补录昨天（每日任务）
+# 补录昨天（星期任务）
 curl -s -X POST "$BASE/api/agent/tasks/<任务id>/complete" \
   -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"doneDate":"2026-10-20"}'
